@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Сайт университета — демо виджета</title>
+    <style>
+      :root { font-family: Georgia, "Times New Roman", serif; color: #1a2030; }
+      body { margin: 0; background: #f3f0e8; }
+      header { padding: 18px 28px; background: #14203a; color: #f4f7ff; }
+      header strong { letter-spacing: 0.08em; }
+      header span { opacity: 0.7; font-size: 14px; margin-left: 10px; }
+      main { display: grid; grid-template-columns: 1fr 420px; gap: 28px; max-width: 1100px; margin: 0 auto; padding: 28px; }
+      article { line-height: 1.55; }
+      h1 { font-size: 1.8rem; }
+      iframe { width: 100%; height: 640px; border: 0; border-radius: 16px; background: #070c19; box-shadow: 0 12px 40px rgba(20, 32, 58, 0.18); }
+      aside p { margin: 0 0 10px; font-size: 13px; color: #5a6478; }
+      code { display: block; padding: 12px; background: #fff; border-radius: 8px; font-size: 12px; overflow: auto; }
+      @media (max-width: 860px) {
+        main { grid-template-columns: 1fr; }
+        iframe { height: 520px; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>ИГУ</strong><span>учебный портал · демо встраивания</span>
+    </header>
+    <main>
+      <article>
+        <h1>Расписание и цифры — без кабинета аналитика</h1>
+        <p>
+          Это не настоящий сайт вуза. Так чат выглядит, если его вставить
+          в любую страницу: новости, личный кабинет, лендинг приёмной комиссии.
+        </p>
+        <p>Справа — тот же GIGACHADS, только в рамке. Шапка сайта спрятана.</p>
+      </article>
+      <aside>
+        <p>Виджет · <code style="display:inline;padding:0">&lt;iframe src="/?embed=1"&gt;</code></p>
+        <iframe src="/?embed=1" title="Чат GIGACHADS"></iframe>
+        <p>Код для своего сайта:</p>
+        <code>&lt;iframe
+  src="https://ВАШ_ДОМЕН/?embed=1"
+  title="Чат GIGACHADS"
+  width="420"
+  height="640"
+  style="border:0;border-radius:16px"&gt;
+&lt;/iframe&gt;</code>
+      </aside>
+    </main>
+  </body>
+</html>
