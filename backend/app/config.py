@@ -7,9 +7,21 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql://uni:uni_pass@localhost:5432/university"
+    app_secret: str = "change_me"
+
+    # LLM (Lead AI, P1)
     llm_api_key: str = ""
     llm_model: str = ""
-    app_secret: str = "change_me"
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_mode: str = "auto"          # auto | mock | real
+    llm_auth: str = "auto"          # auto | bearer | apikey
+    llm_timeout: float = 30.0
+    llm_max_retries: int = 2
+
+    # Yandex AI Studio / Cloud (fallback, если LLM_* не заполнены)
+    yandex_cloud_api_key: str = ""
+    yandex_cloud_model: str = ""
+    yandex_cloud_folder: str = ""
 
     # Безопасность
     statement_timeout_ms: int = 5000

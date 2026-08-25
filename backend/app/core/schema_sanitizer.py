@@ -111,16 +111,80 @@ def get_sanitized_schema(role: str) -> str:
     return "\n".join(lines)
 
 
+# Few-shot примеры по ролям: (вопрос, корректный SQL). Реальные данные и имена столбцов
+# берутся из схемы — LLM должен подражать стилю, а не копировать условие.
+FEW_SHOT: dict[str, list[tuple[str, str]]] = {
+    "applicant": [
+        (
+            "Сколько бюджетных мест на направлении «Информационные системы и технологии»?",
+            "SELECT p.name, p.budget_seats FROM programs p "
+            "WHERE lower(p.name) LIKE '%информационн%' LIMIT 50",
+        ),
+        (
+            "Какой средний проходной балл прошлого года на программы факультета ИТ?",
+            "SELECT f.name, AVG(p.min_score_prev) AS avg_score FROM programs p "
+            "JOIN faculties f ON p.faculty_id = f.id WHERE lower(f.name) LIKE '%информационн%' "
+            "GROUP BY f.name LIMIT 50",
+        ),
+        (
+            "Сколько заявлений подано на «Экономику» в 2026 году?",
+            "SELECT p.name, COUNT(a.id) AS applications FROM applicants a "
+            "JOIN programs p ON a.program_id = p.id "
+            "WHERE EXTRACT(YEAR FROM a.submitted_date) = 2026 AND lower(p.name) LIKE '%экономик%' "
+            "GROUP BY p.name LIMIT 50",
+        ),
+    ],
+    "staff": [
+        (
+            "Сколько студентов обучается на факультете информационных технологий?",
+            "SELECT f.name, COUNT(s.id) AS students FROM students s "
+            "JOIN programs p ON s.program_id = p.id JOIN faculties f ON p.faculty_id = f.id "
+            "WHERE lower(f.name) LIKE '%информационн%' AND s.status = 'active' GROUP BY f.name LIMIT 50",
+        ),
+        (
+            "Какой средний GPA по факультету за весенний семестр?",
+            "SELECT f.name, AVG(e.grade) AS avg_gpa FROM enrollments e "
+            "JOIN courses c ON e.course_id = c.id JOIN programs p ON c.program_id = p.id "
+            "JOIN faculties f ON p.faculty_id = f.id "
+            "WHERE lower(e.semester) LIKE '%весн%' GROUP BY f.name LIMIT 50",
+        ),
+        (
+            "Сколько студентов имеют академическую задолженность (не сдали экзамен)?",
+            "SELECT COUNT(DISTINCT e.student_id) AS debtors FROM enrollments e "
+            "WHERE e.passed = false",
+        ),
+    ],
+}
+
+# Имена ролей для «человеческого» заголовка в промпте
+ROLE_LABEL = {"applicant": "абитуриент", "staff": "сотрудник/администрация"}
+
+
 def build_system_prompt(role: str) -> str:
-    """Полный системный промпт для LLM: роль + очищенная схема + правила."""
-    prompt = (
-        "Ты — SQL-аналитик университета. Отвечай ТОЛЬКО валидным PostgreSQL (SELECT).\n"
-        "Правила:\n"
-        "- только SELECT; без INSERT/UPDATE/DELETE/DROP/ALTER;\n"
-        "- обращайся только к таблицам из схемы ниже;\n"
-        "- если данных нет в схеме — верни 'UNKNOWN' (не выдумывай);\n"
-        "- сложные запросы: JOIN 3+ таблиц, GROUP BY, оконные функции;\n"
-        "- широкий запрос (без фильтра/агрегата) — добавь LIMIT.\n\n"
-        + get_sanitized_schema(role)
+    """Полный системный промпт для LLM: роль + few-shot + очищенная схема + правила."""
+    lines = [
+        "Ты — SQL-аналитик университета. Отвечаешь ТОЛЬКО валидным PostgreSQL (SELECT).",
+        f"Твоя роль: {ROLE_LABEL.get(role, role)} ({role}).",
+        "",
+        "ЖЁСТКИЕ ПРАВИЛА:",
+        "- только SELECT; без INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE и т.п.;",
+        "- обращайся только к таблицам из схемы ниже (имена таблиц/столбцов — только из схемы);",
+        "- ПДн: поля fio, email, phone, student_card_no, passport недоступны — по таблицам "
+        "students, applicants, enrollments допустимы ТОЛЬКО агрегаты (COUNT, AVG, MIN, MAX, GROUP BY);",
+        "- если данных нет в схеме или вопрос не про БД — верни \"UNKNOWN\" (не выдумывай);",
+        "- сложные запросы: JOIN 3+ таблиц, GROUP BY, оконные функции;",
+        "- широкий запрос (без фильтра/агрегата) — добавь LIMIT.",
+        "",
+        f"ПРИМЕРЫ (few-shot) для роли {role}:",
+    ]
+    for q, sql in FEW_SHOT.get(role, []):
+        lines.append(f'Вопрос: "{q}"')
+        lines.append(f"SQL: {sql}")
+    lines.append("")
+    lines.append(get_sanitized_schema(role))
+    lines.append("")
+    lines.append(
+        "Верни ТОЛЬКО JSON без markdown-обёрток в формате: "
+        '{"sql": "<запрос>", "explanation": {"logic": "<кратко о логике запроса>"}}.'
     )
-    return prompt
+    return "\n".join(lines)
