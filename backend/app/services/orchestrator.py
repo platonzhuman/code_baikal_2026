@@ -67,7 +67,7 @@ class Orchestrator:
 
         return ChatResponse(
             status="success",
-            text=self._summarize(req.question, len(rows)),
+            text=await self.llm.summarize(req.question, safe_sql, columns, data, req.role.value, len(rows)),
             sql=safe_sql,
             result=ResultBlock(
                 columns=columns,
@@ -77,7 +77,7 @@ class Orchestrator:
                 warning=("Запрос широкий, показаны первые строки" if truncated else None),
                 suggested_filters=self._suggest_filters(meta),
             ),
-            explanation=self._explain(meta),
+            explanation=self._explain(meta, safe_sql),
             meta={
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "query_id": query_id,
@@ -123,18 +123,16 @@ class Orchestrator:
             "threshold": self.settings.sql_judge_threshold,
         }
 
-    def _summarize(self, question: str, row_count: int) -> str:
-        return (f"По запросу «{question}» найдено записей: {row_count}. "
-                "Данные приведены в агрегированном виде.")
-
-    def _explain(self, meta: dict) -> ExplanationBlock:
+    def _explain(self, meta: dict, sql: str = "") -> ExplanationBlock:
+        """Explainable AI: AST-объяснение SQL (P1) + метаданные валидатора (P2)."""
+        ast = self.llm.explain_sql(sql) if sql else {}
         e = self.validator.explain(meta)
         return ExplanationBlock(
-            tables=e["tables"],
-            joins=e["joins"],
-            filters=e["filters"],
-            aggregates=e["aggregates"],
-            constraints=e["constraints"],
+            tables=ast.get("tables") or e["tables"],
+            joins=ast.get("joins", []),
+            filters=ast.get("filters", []),
+            aggregates=ast.get("aggregates", []),
+            constraints=ast.get("constraints", []),
         )
 
     def _error(self, code, message, query_id, start, req=None, sql="", meta=None) -> ChatResponse:
