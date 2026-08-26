@@ -142,3 +142,45 @@ CREATE OR REPLACE VIEW v_courses AS
     SELECT id, teacher_id, program_id, name, credits, semester FROM courses;
 CREATE OR REPLACE VIEW v_enrollments AS
     SELECT id, student_id, course_id, semester, grade, passed, attendance FROM enrollments;
+
+-- ============================================================
+-- v2: ГРУППЫ, АУДИТОРИИ, РАСПИСАНИЕ, НАГРУЗКА + новые поля
+-- ============================================================
+CREATE TABLE IF NOT EXISTS groups (
+    id         BIGSERIAL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    program_id BIGINT NOT NULL REFERENCES programs(id),
+    course     INT
+);
+
+CREATE TABLE IF NOT EXISTS rooms (
+    id         BIGSERIAL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    building   TEXT,
+    capacity   INT,
+    faculty_id BIGINT REFERENCES faculties(id)
+);
+
+CREATE TABLE IF NOT EXISTS schedule (
+    id         BIGSERIAL PRIMARY KEY,
+    room_id    BIGINT REFERENCES rooms(id),
+    course_id  BIGINT REFERENCES courses(id),
+    day_of_week TEXT,
+    pair       INT,
+    semester   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS teaching_load (
+    id        BIGSERIAL PRIMARY KEY,
+    staff_id  BIGINT REFERENCES staff(id),
+    course_id BIGINT REFERENCES courses(id),
+    hours     INT,
+    semester  TEXT
+);
+
+ALTER TABLE students ADD COLUMN IF NOT EXISTS group_id BIGINT REFERENCES groups(id);
+ALTER TABLE programs ADD COLUMN IF NOT EXISTS year INT;
+ALTER TABLE courses  ADD COLUMN IF NOT EXISTS year INT;
+ALTER TABLE applicants ADD COLUMN IF NOT EXISTS ege_math INT;
+ALTER TABLE applicants ADD COLUMN IF NOT EXISTS ege_rus INT;
+ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS attempt INT;

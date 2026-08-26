@@ -47,6 +47,10 @@ async def migrate(conn: asyncpg.Connection) -> None:
     schema.sql использует IF NOT EXISTS, поэтому дропаем вручную при --wipe.
     """
     for drop in (
+        "DROP TABLE IF EXISTS teaching_load CASCADE",
+        "DROP TABLE IF EXISTS schedule CASCADE",
+        "DROP TABLE IF EXISTS rooms CASCADE",
+        "DROP TABLE IF EXISTS groups CASCADE",
         "DROP TABLE IF EXISTS enrollments CASCADE",
         "DROP TABLE IF EXISTS courses CASCADE",
         "DROP TABLE IF EXISTS applicants CASCADE",
@@ -170,48 +174,120 @@ async def seed(conn: asyncpg.Connection) -> None:
         stud_rows)
     student_ids = [r["id"] for r in await conn.fetch("SELECT id FROM students ORDER BY id")]
 
-    # ---- 4) Абитуриенты ----
-    appl_rows = [
-        (f"Абитуриент {random.choice(DOCTORS)} {random.randint(1000,9999)}",
-         random.choice(program_ids), random.randint(120, 280),
-         datetime.date(random.choice([2025, 2026]), random.randint(6, 7), random.randint(1, 28)),
-         random.choices(["submitted", "enrolled", "rejected"], weights=[60, 25, 15])[0],
-         random.choices(["budget", "paid"], weights=[60, 40])[0])
-        for _ in range(3000)
-    ]
+    # ---- 4) Абитуриенты (годы 2021–2026 — для «динамики за 5 лет») ----
+    appl_rows = []
+    for _ in range(3000):
+        y = random.choice([2021, 2022, 2023, 2024, 2025, 2026])
+        score = random.randint(120, 280)
+        ege_math = min(300, int(score * random.uniform(0.45, 0.55)))
+        appl_rows.append((f"Абитуриент {random.choice(DOCTORS)} {random.randint(1000,9999)}",
+                          random.choice(program_ids), score,
+                          datetime.date(y, random.randint(6, 9), random.randint(1, 28)),
+                          random.choices(["submitted", "enrolled", "rejected"], weights=[60, 25, 15])[0],
+                          random.choices(["budget", "paid"], weights=[60, 40])[0],
+                          ege_math, score - ege_math))
     await conn.executemany(
-        "INSERT INTO applicants (fio, program_id, ege_score, submitted_date, status, source) "
-        "VALUES ($1,$2,$3,$4,$5,$6)",
+        "INSERT INTO applicants (fio, program_id, ege_score, submitted_date, status, source, ege_math, ege_rus) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
         appl_rows)
 
-    # ---- 5) Дисциплины ----
+    # ---- 5) Дисциплины (курсы) ----
     course_rows = [
         (random.choice(teacher_ids), random.choice(program_ids),
-         random.choice(DISCIPLINES), random.choice([2, 3, 4, 5]), random.choice([1, 2]))
+         random.choice(DISCIPLINES), random.choice([2, 3, 4, 5]), random.choice([1, 2]),
+         random.choice([2024, 2025, 2026]))
         for _ in range(40)
     ]
     await conn.executemany(
-        "INSERT INTO courses (teacher_id, program_id, name, credits, semester) VALUES ($1,$2,$3,$4,$5)",
+        "INSERT INTO courses (teacher_id, program_id, name, credits, semester, year) "
+        "VALUES ($1,$2,$3,$4,$5,$6)",
         course_rows)
     course_ids = [r["id"] for r in await conn.fetch("SELECT id FROM courses ORDER BY id")]
 
-    # ---- 6) Успеваемость ----
+    # ---- 6) Успеваемость (с попыткой) ----
     enrol_rows = []
     for sid in student_ids:
         for _ in range(random.randint(2, 5)):
             grade = round(random.uniform(2.0, 5.0), 2)
+            passed = grade >= 3
             enrol_rows.append((sid, random.choice(course_ids),
                                random.choice(["2025 spring", "2025 fall", "2026 spring"]),
-                               grade, grade >= 3, random.randint(40, 100)))
+                               grade, passed, random.randint(40, 100),
+                               1 if passed else random.choice([1, 2])))
     await conn.executemany(
-        "INSERT INTO enrollments (student_id, course_id, semester, grade, passed, attendance) "
-        "VALUES ($1,$2,$3,$4,$5,$6)",
+        "INSERT INTO enrollments (student_id, course_id, semester, grade, passed, attendance, attempt) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7)",
         enrol_rows)
+
+    # ---- 7) Группы (реалистичные имена для демо) + привязка студентов ----
+    GROUPS_BY_PROG = {
+        "Информационные системы и технологии": ["ИВТ-101", "ИВТ-102", "ИВТ-103"],
+        "Бизнес-информатика": ["БИВ-211", "БИВ-212"],
+        "Программная инженерия": ["ПИ-201", "ПИ-202"],
+    }
+    prog_name = dict(await conn.fetch("SELECT id, name FROM programs"))
+    group_rows = []
+    for pid, pname in prog_name.items():
+        base = GROUPS_BY_PROG.get(pname)
+        if base is None:
+            abbrev = "".join(w[0].upper() for w in pname.split())[:3] or "ГР"
+            base = [f"{abbrev}-{pid}01", f"{abbrev}-{pid}02", f"{abbrev}-{pid}03"]
+        for nm in base:
+            group_rows.append((nm, pid, random.randint(1, 5)))
+    await conn.executemany("INSERT INTO groups (name, program_id, course) VALUES ($1,$2,$3)", group_rows)
+    # назначить студентам группу направления set-based (по остатку id — быстро, без построчных UPDATE)
+    await conn.execute(
+        "WITH grp AS (SELECT g.id, g.program_id, "
+        "row_number() OVER (PARTITION BY g.program_id ORDER BY g.id) rn, "
+        "count(*) OVER (PARTITION BY g.program_id) cnt FROM groups g) "
+        "UPDATE students s SET group_id = g.id FROM grp g "
+        "WHERE g.program_id = s.program_id AND g.rn = (s.id % g.cnt) + 1")
+
+    # ---- 8) Аудитории (корпуса А/Б по факультетам) ----
+    room_rows = [
+        (f"ауд-{fid}{i}", "А" if i % 2 else "Б", 30 + i * 10, fid)
+        for i in range(1, 7)
+        for fid in faculty_ids
+    ]
+    await conn.executemany("INSERT INTO rooms (name, building, capacity, faculty_id) VALUES ($1,$2,$3,$4)", room_rows)
+    room_ids = await conn.fetch("SELECT id, faculty_id FROM rooms ORDER BY id")
+    rooms_by_fac: dict[int, list[int]] = {}
+    for r in room_ids:
+        rooms_by_fac.setdefault(r["faculty_id"], []).append(r["id"])
+
+    # ---- 9) Расписание (по дисциплинам: аудитория факультета, день, пара) ----
+    course_fac = dict(await conn.fetch(
+        "SELECT c.id, p.faculty_id FROM courses c JOIN programs p ON c.program_id = p.id"))
+    sched_rows = []
+    for cid, fac in course_fac.items():
+        rooms_pool = rooms_by_fac.get(fac) or [None]
+        sched_rows.append((random.choice(rooms_pool), cid,
+                           random.choice(["Пн", "Вт", "Ср", "Чт", "Пт"]),
+                           random.choice([1, 2, 3]),
+                           random.choice(["2025 spring", "2025 fall", "2026 spring"])))
+    await conn.executemany(
+        "INSERT INTO schedule (room_id, course_id, day_of_week, pair, semester) VALUES ($1,$2,$3,$4,$5)",
+        sched_rows)
+
+    # ---- 10) Нагрузка преподавателей (часы) ----
+    course_teacher = dict(await conn.fetch("SELECT id, teacher_id FROM courses"))
+    load_rows = [
+        (tid, cid, 60 + (cid % 4) * 30, "2025 spring")
+        for cid, tid in course_teacher.items()
+        if tid is not None
+    ]
+    await conn.executemany(
+        "INSERT INTO teaching_load (staff_id, course_id, hours, semester) VALUES ($1,$2,$3,$4)",
+        load_rows)
+
+    # ---- 11) Год квот программ ----
+    await conn.execute("UPDATE programs SET year = 2026 WHERE year IS NULL")
 
     print(f"OK. staff={len(staff_rows)+len(teacher_rows)}, faculties={len(faculty_ids)}, "
           f"departments={len(dept_ids)}, programs={len(program_ids)}, "
           f"students={len(student_ids)}, applicants={len(appl_rows)}, "
-          f"courses={len(course_ids)}, enrollments={len(enrol_rows)}")
+          f"courses={len(course_ids)}, enrollments={len(enrol_rows)}, "
+          f"groups={len(group_rows)}, rooms={len(room_rows)}, schedule={len(sched_rows)}")
 
 
 async def main() -> None:

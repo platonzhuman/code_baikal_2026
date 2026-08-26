@@ -44,10 +44,13 @@ LEARNER_TABLES = {"students", "applicants", "enrollments"}
 # какие таблицы видит каждая роль (whitelist ролей — это политика, не структура)
 ROLE_ALLOWED_TABLES: dict[str, set[str]] = {
     "applicant": {"programs", "faculties", "applicants"},
-    "student": {"programs", "faculties", "departments", "courses", "enrollments", "students"},
-    "teacher": {"staff", "courses", "enrollments", "programs", "faculties", "departments"},
+    "student": {"programs", "faculties", "departments", "courses", "enrollments", "students",
+                "groups"},
+    "teacher": {"staff", "courses", "enrollments", "programs", "faculties", "departments",
+                "groups", "schedule", "teaching_load", "rooms"},
     "staff": {"staff", "faculties", "departments", "programs", "students",
-              "applicants", "courses", "enrollments"},
+              "applicants", "courses", "enrollments", "groups", "rooms",
+              "schedule", "teaching_load"},
 }
 
 
@@ -177,6 +180,30 @@ TABLES_INFO: dict[str, tuple[str, dict[str, str]]] = {
         {"id": "идентификатор", "post": "должность (декан/преподаватель/...)",
          "department_id": "кафедра → departments.id"},
     ),
+    "groups": (
+        "учебные группы студентов",
+        {"id": "идентификатор", "name": "название группы (напр. ИВТ-101)",
+         "program_id": "направление → programs.id", "course": "курс"},
+    ),
+    "rooms": (
+        "аудитории и здания",
+        {"id": "идентификатор", "name": "номер аудитории",
+         "building": "корпус (А/Б)", "capacity": "вместимость",
+         "faculty_id": "факультет → faculties.id"},
+    ),
+    "schedule": (
+        "расписание занятий (аудитория+дисциплина+день+пара)",
+        {"id": "идентификатор", "room_id": "аудитория → rooms.id",
+         "course_id": "дисциплина → courses.id",
+         "day_of_week": "день недели (Пн..Пт)", "pair": "пара (1..3)",
+         "semester": "семестр <год> spring/fall"},
+    ),
+    "teaching_load": (
+        "учебная нагрузка преподавателей (в часах)",
+        {"id": "идентификатор", "staff_id": "преподаватель → staff.id",
+         "course_id": "дисциплина → courses.id", "hours": "часы нагрузки",
+         "semester": "семестр"},
+    ),
 }
 
 # Связи между таблицами (для JOIN) — человекочитаемо
@@ -193,12 +220,21 @@ RELATIONS = [
     "enrollments.course_id → courses.id",
     "faculties.dean_id → staff.id",
     "departments.head_id → staff.id",
+    "groups.program_id → programs.id",
+    "students.group_id → groups.id",
+    "rooms.faculty_id → faculties.id",
+    "schedule.room_id → rooms.id",
+    "schedule.course_id → courses.id",
+    "teaching_load.staff_id → staff.id",
+    "teaching_load.course_id → courses.id",
 ]
 
 # Основной «сюжет» данных (для контекста)
 DATA_STORY = (
     "Логика: факультеты → кафедры и направления; студенты/абитуриенты → направления; "
-    "дисциплины → направления; успеваемость → студенты+дисциплины; персонал в staff."
+    "студенты → группы (groups); дисциплины → направления; успеваемость → студенты+дисциплины; "
+    "аудитории (rooms) → факультеты; расписание (schedule) → аудитории+дисциплины; "
+    "нагрузка преподавателей (teaching_load) → staff+дисциплины; персонал в staff."
 )
 
 
@@ -278,7 +314,13 @@ VALUE_MAP = (
     "· ИТ/айтишники/программисты → 'Информационные технологии';\n"
     "· «за последние N дней» → submitted_date >= (max(submitted_date) - N дней); "
     "«за последние N лет» → год >= (максимальный год - N + 1);\n"
-    "· «второй семестр» → '... spring'; «первый/осенний» → '... fall'."
+    "· «второй семестр» → '... spring'; «первый/осенний» → '... fall';\n"
+    "· группа (ИВТ-101/БИВ-211) → groups.name; аудитория/кабинет → rooms; "
+    "корпус → rooms.building; расписание → schedule;\n"
+    "· нагрузка (часы) → teaching_load.hours; «сколько часов» → SUM(teaching_load.hours);\n"
+    "· «по математике/русскому» → applicants.ege_math / ege_rus;\n"
+    "· «с первой попытки» → enrollments.attempt=1; «сколько сдал с 1-й попытки» → WHERE attempt=1 AND passed;\n"
+    "· «2-я пара/понедельник» → schedule.pair=2, schedule.day_of_week='Пн'."
 )
 
 

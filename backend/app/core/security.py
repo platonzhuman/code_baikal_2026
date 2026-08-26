@@ -18,6 +18,8 @@ ALLOWED_TABLES = {
     # Безопасные представления (без ПДн) — рекомендуемый слой доступа
     "v_students", "v_applicants", "v_staff", "v_faculties",
     "v_departments", "v_programs", "v_courses", "v_enrollments",
+    # Новые v2: группы, аудитории, расписание, нагрузка
+    "groups", "rooms", "schedule", "teaching_load",
 }
 
 # Служебные функции/конструкции, запрещённые даже внутри SELECT
