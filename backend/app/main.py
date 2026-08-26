@@ -1,13 +1,17 @@
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 import structlog
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.core.audit import log_query
+from app.core.auth import check_login, make_token, verify_token
 from app.core.db import Database
-from app.core.history import HistoryStore, build_store
-from app.core.schemas import ChatRequest, ChatResponse, HealthResponse
+from app.core.history import HistoryStore, RateLimiter, build_store
+from app.core.schemas import (ChatRequest, ChatResponse, HealthResponse,
+                              LoginRequest, LoginResponse, Role)
 from app.core.schema_sanitizer import get_sanitized_schema
 from app.services.orchestrator import Orchestrator
 
@@ -21,7 +25,8 @@ async def lifespan(app: FastAPI):
     await db.connect()
     app.state.db = db
     app.state.orchestrator = Orchestrator(db)
-    app.state.store = build_store()
+    app.state.store = build_store(db=db)
+    app.state.rate_limiter = RateLimiter(settings.rate_limit_per_minute)
     log.info("backend_started", db_url_shadow="...")
     try:
         yield
@@ -53,11 +58,35 @@ async def root():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
-    response = await app.state.orchestrator.chat(req)
-    await app.state.store.record(
-        session_id=req.session_id, query_id=response.meta.query_id,
-        role=req.role.value, question=req.question, response=response,
+async def chat(req: ChatRequest, request: Request):
+    # Rate-limit по session_id (или IP). Сбой: слишком часто -> 429.
+    key = req.session_id or (request.client.host if request.client else "anon")
+    if not await app.state.rate_limiter.allow(key):
+        raise HTTPException(status_code=429, detail="Слишком много запросов. Попробуйте чуть позже.")
+
+    # Дедупликация: если такой query_id уже обработан — вернуть готовый ответ.
+    if req.query_id:
+        cached = await app.state.store.get_cached(req.query_id)
+        if cached is not None:
+            return cached
+
+    # Роль определяет СЕРВЕР: по токену из заголовка Authorization; иначе роль клиента.
+    req.role = await _resolve_role(req, request)
+
+    # Статус «в обработке» (чтобы при обрыве фронт видел незавершённый запрос).
+    qid = req.query_id or str(uuid4())
+    await app.state.store.begin(req.session_id, qid, req.role.value, req.question)
+
+    response = await app.state.orchestrator.chat(req, query_id=qid)
+    await app.state.store.emit(
+        session_id=req.session_id, req_question=req.question, req_role=req.role.value,
+        response=response,
+    )
+    log_query(
+        session_id=req.session_id, query_id=response.meta.query_id, role=req.role.value,
+        question=req.question, status=response.status, sql=response.sql,
+        latency_ms=response.meta.latency_ms,
+        error=response.error.message if response.error else None,
     )
     return response
 
@@ -78,3 +107,25 @@ async def logs():
 async def history(session_id: str = Query(...)):
     """История диалога по session_id (возобновление после обрыва сети)."""
     return {"session_id": session_id, "items": await app.state.store.get_thread(session_id)}
+
+
+@app.post("/login", response_model=LoginResponse)
+async def login(req: LoginRequest):
+    """Вход по общему логину/паролю роли -> роль + токен.
+    Абитуриент — гость (вход не нужен). Студент/преподаватель/сотрудник — по кредам из .env."""
+    role = check_login(req.login, req.password)
+    if not role:
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+    return LoginResponse(role=role, token=make_token(role))
+
+
+async def _resolve_role(req: ChatRequest, request: Request) -> Role:
+    """Роль на сервере: если в заголовке Authorization есть валидный токен — берём роль из него;
+    иначе оставляем роль клиента (обратная совместимость с P3)."""
+    auth = request.headers.get("authorization", "")
+    token = auth.replace("Bearer ", "").strip()
+    if token:
+        role = verify_token(token)
+        if role in {r.value for r in Role}:
+            return Role(role)
+    return req.role

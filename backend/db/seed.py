@@ -27,6 +27,15 @@ FACULTIES = ["Информационные технологии", "Эконом�
 DOCTORS = ["Смирнов", "Иванова", "Петров", "Соколова", "Кузнецов", "Морозов"]
 DISCIPLINES = ["Базы данных", "Алгоритмы", "Высшая математика", "Программирование",
                "Экономика", "Философия", "Статистика", "Дискретная математика"]
+# Реалистичные направления подготовки по факультетам (для корректных ответов на вопросы из памятки)
+PROGRAMS_BY_FACULTY = {
+    "Информационные технологии": ["Информационные системы и технологии", "Программная инженерия",
+                                  "Прикладная информатика"],
+    "Экономика": ["Экономика", "Финансы и кредит", "Бизнес-информатика"],
+    "Филология": ["Филология", "Лингвистика", "Журналистика"],
+    "Физика": ["Физика", "Прикладная математика и физика", "Радиофизика"],
+    "Право": ["Юриспруденция", "Правовое обеспечение национальной безопасности"],
+}
 
 
 def sql() -> str:
@@ -100,12 +109,18 @@ async def seed(conn: asyncpg.Connection) -> None:
         teacher_rows)
     teacher_ids = [r["id"] for r in await conn.fetch("SELECT id FROM staff WHERE post='преподаватель' ORDER BY id")]
 
-    # ---- 2) Направления ----
+    # ---- 2) Направления (реалистичные названия по факультету) ----
+    names_by_fac: dict[int, list[str]] = {}
+    for i, fac_name in enumerate(FACULTIES):
+        names_by_fac[faculty_ids[i]] = PROGRAMS_BY_FACULTY.get(fac_name, [fac_name])
     prog_rows = []
     for route in range(len(faculty_ids) * 3):
-        prog_rows.append((faculty_ids[route % len(faculty_ids)],
+        fac_id = faculty_ids[route % len(faculty_ids)]
+        pool = names_by_fac[fac_id]
+        pname = pool[route // len(faculty_ids) % len(pool)]
+        prog_rows.append((fac_id,
                           f"{random.randint(9,15):02d}.{random.randint(2,4):02d}.{random.randint(2,4):02d}",
-                          f"Направление {random.choice(DISCIPLINES)}",
+                          pname,
                           random.randint(20, 60), random.randint(10, 40),
                           random.randint(150, 250),
                           random.choice(["fulltime", "parttime"])))

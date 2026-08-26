@@ -5,15 +5,29 @@ from pydantic import BaseModel, Field
 
 
 class Role(str, Enum):
-    applicant = "applicant"   # по умолчанию (гость, без входа)
-    staff = "staff"           # после входа на фронте (фейк-логин, пароль не уходит)
+    applicant = "applicant"   # гость (без входа)
+    student = "student"       # по логину
+    teacher = "teacher"       # по логину
+    staff = "staff"           # по логину
+
+
+class LoginRequest(BaseModel):
+    login: str = Field(..., min_length=1, max_length=64)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class LoginResponse(BaseModel):
+    role: str
+    token: str
 
 
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000)
     role: Role = Role.applicant
     session_id: str = Field(default="", max_length=64)
+    query_id: str = Field(default="", max_length=64)   # идемпотентность (дедупликация)
     max_rows: int = Field(default=50, ge=1, le=1000)
+    page: int = Field(default=1, ge=1)
     explain: bool = True
 
 
@@ -24,6 +38,10 @@ class ResultBlock(BaseModel):
     truncated: bool = False
     warning: Optional[str] = None
     suggested_filters: Optional[list[dict[str, str]]] = None
+    page: int = 1
+    page_size: int = 50
+    total: int = 0
+    total_pages: int = 1
 
 
 class ExplanationBlock(BaseModel):
@@ -38,6 +56,7 @@ class Meta(BaseModel):
     latency_ms: int = 0
     query_id: str = ""
     judge: Optional[dict] = None
+    plan: Optional[dict] = None   # EXPLAIN: total_cost, plan_rows, node_type
 
 
 class ErrorBlock(BaseModel):

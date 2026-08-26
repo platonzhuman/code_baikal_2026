@@ -31,12 +31,11 @@ def test_chat_validation_empty_question(client):
 
 
 def test_chat_validation_bad_role(client):
-    res = client.post("/chat", json={"question": "х", "role": "student"})
+    res = client.post("/chat", json={"question": "х", "role": "superman"})
     assert res.status_code == 422
 
 
 def test_logs_and_history(client):
-    # после успешного запроса должно появиться в /logs и /history
     sid = "sess-test-123"
     res = client.post("/chat", json={"question": "Сколько заявлений?", "role": "staff",
                                      "session_id": sid})
@@ -49,4 +48,23 @@ def test_logs_and_history(client):
     assert h.status_code == 200
     items = h.json()["items"]
     assert isinstance(items, list) and len(items) >= 1
+
+
+def test_chat_pagination_fields(client):
+    res = client.post("/chat", json={"question": "Какова численность студентов по факультетам?",
+                                     "role": "staff", "session_id": "pag", "page": 1, "max_rows": 5})
+    assert res.status_code == 200
+    r = res.json()["result"]
+    for f in ("page", "page_size", "total", "total_pages"):
+        assert f in r
+
+
+def test_chat_dedup_by_query_id(client):
+    body = {"question": "Сколько студентов имеют задолженность?", "role": "staff",
+            "session_id": "dedup", "query_id": "fixed-query-1"}
+    r1 = client.post("/chat", json=body).json()
+    r2 = client.post("/chat", json=body).json()
+    assert r1["meta"]["query_id"] == "fixed-query-1"
+    assert r1["status"] == r2["status"]
+    assert r1.get("text") == r2.get("text")
 

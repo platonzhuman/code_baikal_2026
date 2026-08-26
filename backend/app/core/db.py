@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import asyncpg
 
 from app.config import get_settings
@@ -49,3 +51,34 @@ class Database:
             return bool(result and result[0]["ok"] == 1)
         except Exception:
             return False
+
+    async def execute(self, query: str, params: list | None = None) -> str:
+        """Выполнить запись в БД (для chat_messages / служебных таблиц)."""
+        if not self._pool:
+            raise RuntimeError("DB pool is not connected")
+        async with self._pool.acquire() as conn:
+            return await conn.execute(query, *(params or []))
+
+    async def explain(self, query: str) -> dict:
+        """EXPLAIN (FORMAT JSON) для оценки стоимости/времени плана.
+
+        Не выполняет запрос (только планирует) -> безопасно для оценки.
+        """
+        if not self._pool:
+            raise RuntimeError("DB pool is not connected")
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(f"SET LOCAL statement_timeout = {get_settings().statement_timeout_ms}")
+                await conn.execute("SET LOCAL default_transaction_read_only = ON")
+                await conn.execute("SET LOCAL transaction_read_only = ON")
+                rows = await conn.fetch("EXPLAIN (FORMAT JSON) " + query)
+                raw = rows[0]["QUERY PLAN"]
+                if isinstance(raw, str):
+                    raw = json.loads(raw)
+                plan = raw[0]["Plan"]
+                return {
+                    "total_cost": plan.get("Total Cost", 0.0),
+                    "startup_cost": plan.get("Startup Cost", 0.0),
+                    "plan_rows": plan.get("Plan Rows", 0),
+                    "node_type": plan.get("Node Type", ""),
+                }

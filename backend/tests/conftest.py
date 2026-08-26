@@ -1,11 +1,10 @@
-"""Общие фикстуры/настройка тестов.
-
-Тесты не должны ходить в реальный LLM и ждать внешние API: принудительно
-включаем mock-режим генератора/судьи (переменная окружения имеет приоритет
-над .env в pydantic-settings).
-"""
 import os
 
+# Тесты должны быть быстрыми и не зависеть от сетевого LLM/Yandex.
+# Переопределяем .env приоритетом окружения и сбрасываем кэш настроек.
 os.environ["LLM_MODE"] = "mock"
-os.environ["LLM_API_KEY"] = ""
-os.environ["LLM_MODEL"] = ""
+os.environ["RATE_LIMIT_PER_MINUTE"] = "1000"
+
+from app.config import get_settings  # noqa: E402
+
+get_settings.cache_clear()

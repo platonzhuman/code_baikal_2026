@@ -102,3 +102,40 @@ CREATE INDEX IF NOT EXISTS idx_enrollments_student    ON enrollments(student_id)
 CREATE INDEX IF NOT EXISTS idx_enrollments_course     ON enrollments(course_id);
 -- Составной индекс: JOIN успеваемость <-> студент + фильтр по курсу
 CREATE INDEX IF NOT EXISTS idx_enrollments_stud_course ON enrollments(student_id, course_id);
+
+-- ============================================================
+-- 9. История диалогов (устойчивость к обрыву сети / хранение чата)
+--    Вопрос и ответ храним БЕЗ чувствительных полей (ПДн).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id         BIGSERIAL PRIMARY KEY,
+    query_id   TEXT NOT NULL UNIQUE,               -- идемпотентность (дедупликация)
+    session_id TEXT NOT NULL,                      -- возобновление диалога
+    role       TEXT NOT NULL,
+    question   TEXT NOT NULL,
+    answer     TEXT NOT NULL,
+    sql        TEXT,
+    status     TEXT DEFAULT 'success',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages(session_id, created_at);
+
+-- ============================================================
+-- БЕЗОПАСНЫЕ ПРЕДСТАВЛЕНИЯ (без ПДн-полей) — рекомендуемый слой доступа
+-- ============================================================
+CREATE OR REPLACE VIEW v_students AS
+    SELECT id, program_id, course, gpa, status, source FROM students;
+CREATE OR REPLACE VIEW v_applicants AS
+    SELECT id, program_id, ege_score, submitted_date, status, source FROM applicants;
+CREATE OR REPLACE VIEW v_staff AS
+    SELECT id, post, department_id FROM staff;
+CREATE OR REPLACE VIEW v_faculties AS
+    SELECT id, name, dean_id FROM faculties;
+CREATE OR REPLACE VIEW v_departments AS
+    SELECT id, faculty_id, name, head_id FROM departments;
+CREATE OR REPLACE VIEW v_programs AS
+    SELECT id, faculty_id, code, name, budget_seats, paid_seats, min_score_prev, form FROM programs;
+CREATE OR REPLACE VIEW v_courses AS
+    SELECT id, teacher_id, program_id, name, credits, semester FROM courses;
+CREATE OR REPLACE VIEW v_enrollments AS
+    SELECT id, student_id, course_id, semester, grade, passed, attendance FROM enrollments;

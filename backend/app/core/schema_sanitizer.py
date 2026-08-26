@@ -74,7 +74,7 @@ TABLES: dict[str, list[tuple[str, str, bool, bool, bool]]] = {
 
 # Роли, для которых по таблицам обучающихся действует жёсткое правило «только агрегаты».
 # Теперь role только applicant|staff, и обе видят обезличенную аналитику вуза.
-ROLE_AGGREGATE_ONLY = {"applicant", "staff"}
+ROLE_AGGREGATE_ONLY = {"applicant", "student", "teacher", "staff"}
 # Таблицы, содержащие данные обучающихся (по ним — только агрегаты).
 LEARNER_TABLES = {"students", "applicants", "enrollments"}
 
@@ -157,7 +157,8 @@ FEW_SHOT: dict[str, list[tuple[str, str]]] = {
 }
 
 # Имена ролей для «человеческого» заголовка в промпте
-ROLE_LABEL = {"applicant": "абитуриент", "staff": "сотрудник/администрация"}
+ROLE_LABEL = {"applicant": "абитуриент", "student": "студент",
+              "teacher": "преподаватель", "staff": "сотрудник/администрация"}
 
 
 def build_system_prompt(role: str) -> str:
@@ -174,6 +175,11 @@ def build_system_prompt(role: str) -> str:
         "- если данных нет в схеме или вопрос не про БД — верни \"UNKNOWN\" (не выдумывай);",
         "- сложные запросы: JOIN 3+ таблиц, GROUP BY, оконные функции;",
         "- широкий запрос (без фильтра/агрегата) — добавь LIMIT.",
+        "- Вопросы вида «сколько студентов ОБУЧАЕТСЯ / учатся / численность студентов» — "
+        "обязательно добавляй фильтр s.status='active' (считаем только активных) и группируй "
+        "по факультету или направлению.",
+        "- Есть безопасные представления v_students, v_applicants, v_staff, v_enrollments "
+        "(без ПДн-полей) — предпочтительно использовать их вместо таблиц students/applicants/staff.",
         "",
         f"ПРИМЕРЫ (few-shot) для роли {role}:",
     ]

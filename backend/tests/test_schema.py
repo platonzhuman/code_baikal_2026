@@ -44,5 +44,5 @@ def test_alias_visible_fields():
 
 
 def test_roles_constants():
-    assert ROLE_AGGREGATE_ONLY == {"applicant", "staff"}
+    assert ROLE_AGGREGATE_ONLY == {"applicant", "student", "teacher", "staff"}
     assert "students" in LEARNER_TABLES

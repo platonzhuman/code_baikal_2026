@@ -11,10 +11,13 @@ from app.config import get_settings
 STATEMENT_START = {"insert", "update", "delete", "drop", "alter", "truncate",
                    "create", "merge", "grant", "revoke", "copy", "call"}
 
-# Белый список таблиц (6-8 из schema.sql). LLM может обращаться только к ним.
+# Белый список таблиц/представлений. LLM может обращаться только к ним.
 ALLOWED_TABLES = {
     "staff", "faculties", "departments", "programs",
     "students", "applicants", "courses", "enrollments",
+    # Безопасные представления (без ПДн) — рекомендуемый слой доступа
+    "v_students", "v_applicants", "v_staff", "v_faculties",
+    "v_departments", "v_programs", "v_courses", "v_enrollments",
 }
 
 # Служебные функции/конструкции, запрещённые даже внутри SELECT

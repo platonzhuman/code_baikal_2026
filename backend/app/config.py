@@ -33,6 +33,29 @@ class Settings(BaseSettings):
     sql_judge_threshold: float = 0.8
     max_sql_attempts: int = 2    # генерация + самоисправление (≤ N попыток)
 
+    # Проверка стоимости запроса через EXPLAIN (производительность)
+    explain_max_cost: float = 1e7   # выше — считаем слишком дорогим -> сузить
+
+    # Серверная авторизация ролей. Общие логины/пароли на класс (хранятся в .env).
+    # Абитуриент — гость (без логина); студент/преподаватель/сотрудник — по кредам.
+    auth_student_login: str = "student"
+    auth_student_password: str = "student"
+    auth_teacher_login: str = "teacher"
+    auth_teacher_password: str = "teacher"
+    auth_staff_login: str = "staff"
+    auth_staff_password: str = "staff"
+    # Токен живёт APP_SECRET + ttl (сек)
+    token_ttl: int = 7200
+
+    @property
+    def role_credentials(self) -> dict[str, tuple[str, str]]:
+        """Роль -> (login, password). Абитуриент — гость, без пары."""
+        return {
+            "student": (self.auth_student_login, self.auth_student_password),
+            "teacher": (self.auth_teacher_login, self.auth_teacher_password),
+            "staff": (self.auth_staff_login, self.auth_staff_password),
+        }
+
 
 @lru_cache
 def get_settings() -> Settings:
