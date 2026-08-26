@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS departments (
 CREATE TABLE IF NOT EXISTS programs (
     id            BIGSERIAL PRIMARY KEY,
     faculty_id    BIGINT  NOT NULL REFERENCES faculties(id),
+    department_id BIGINT REFERENCES departments(id),   -- кафедра, ведущая направление
     code          TEXT    NOT NULL,                  -- Код направления, напр. '09.03.02'
     name          TEXT    NOT NULL,                  -- Название, напр. 'Информационные системы'
     budget_seats  INTEGER NOT NULL DEFAULT 0,        -- Бюджетные места

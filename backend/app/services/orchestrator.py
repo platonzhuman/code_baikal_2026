@@ -5,8 +5,11 @@ import math
 import time
 import uuid
 
+import structlog
+
 from app.config import get_settings
 from app.core.db import Database
+from app.core.logging import emit
 from app.core.schemas import ChatRequest, ChatResponse, ErrorBlock, ExplanationBlock, ResultBlock
 from app.core.schema_sanitizer import get_sanitized_schema
 from app.core.security import SQLValidationError, build_validator
@@ -34,10 +37,45 @@ _PII_QUESTION_HINTS = (
     "фио студент", "фио абитуриент", "фио всех", "зачётк", "студенч", "паспортн",
 )
 
+# Намерение «про студентов» (для сторожа «не считай студентов через staff»)
+_STUDENT_INTENT = ("должн", "задолжен", "сдал", "экзамен", "студент", "учится",
+                   "учатся", "балл", "успеваем", "получили")
+
+
+def _sql_is_fishy(question: str, sql: str) -> bool:
+    """Сторож: если вопрос про студентов/должников, а SQL считает по staff — ловим."""
+    q = (question or "").lower()
+    su = (sql or "").lower()
+    if not any(w in q for w in _STUDENT_INTENT):
+        return False
+    uses_staff = (" staff" in su) or ("from staff" in su) or ("join staff" in su)
+    uses_students = ("students" in su) or ("enrollments" in su)
+    return uses_staff and not uses_students
+
 
 def _is_destructive(question: str) -> bool:
     q = (question or "").lower()
     return any(v in q for v in _DESTRUCTIVE_VERBS)
+
+
+def _ms(t0: float) -> float:
+    return round((time.perf_counter() - t0) * 1000, 1)
+
+
+def _log_timings(query_id: str, role: str, status: str, timings: dict, start: float) -> None:
+    """Структурированное событие: спаны этапов (спецификация логирования)."""
+    total_ms = round((time.perf_counter() - start) * 1000, 1)
+    spans = [{"component": k, "duration_ms": v} for k, v in timings.items()]
+    emit(status_to_level(status), "orchestrator", "chat_spans",
+         trace_id=query_id, query_id=query_id, role=role,
+         data={"status": status, "spans": spans, "total_ms": total_ms})
+    if total_ms > 8000:
+        emit("WARN", "orchestrator", "chat_slow", trace_id=query_id, query_id=query_id,
+             role=role, data={"total_ms": total_ms, "spans": spans})
+
+
+def status_to_level(status: str) -> str:
+    return "ERROR" if status and "error" in str(status) else ("WARN" if "cached" in str(status) else "INFO")
 
 
 def _asks_pii(question: str) -> bool:
@@ -113,11 +151,15 @@ class Orchestrator:
         start = time.perf_counter()
         query_id = query_id or req.query_id or str(uuid.uuid4())
         schema = get_sanitized_schema(req.role.value)
+        timings: dict[str, float] = {}
 
         # Кэш: повторный вопрос той же роли — мгновенно (без LLM/БД).
         if not history:
+            _t = time.perf_counter()
             cached = await self._cached(req.role.value, req.question)
+            timings["cache_check"] = _ms(_t)
             if cached is not None:
+                _log_timings(query_id, req.role.value, "success(cached)", timings, start)
                 return cached
 
         # Отказ до LLM: явное желание изменить/удалить данные -> сразу "нет".
@@ -139,7 +181,9 @@ class Orchestrator:
             )
 
         # Шаг 1: генерация + САМОСУДЬЯ (1 вызов LLM, редко 2). Дальше — без LLM до ответа.
+        _t = time.perf_counter()
         raw_sql, judge_info, suggestion = await self._generate_sql_candidate(req, schema, history)
+        timings["llm_gen"] = _ms(_t)
 
         if raw_sql is None:
             msg = suggestion or "Уточните, пожалуйста, условия запроса — и я пересоберу его."
@@ -148,15 +192,41 @@ class Orchestrator:
 
         try:
             # Шаг 2: жёсткая безопасность (AST) — только SELECT/whitelist/ПДн.
+            _t = time.perf_counter()
             safe_sql, meta = self.validator.validate(raw_sql)
+            timings["ast"] = _ms(_t)
         except SQLValidationError as e:
             return self._error(e.code, e.message, query_id, start, sql=raw_sql)
 
-        # Шаг 3: проверка стоимости (EXPLAIN) — не выполняем слишком дорогие запросы.
-        try:
-            plan = await self.db.explain(safe_sql)
-        except Exception:
-            plan = {"total_cost": 0.0}
+        # Шаг 3-4: EXPLAIN + COUNT + выборка — ПАРАЛЛЕЛЬНО (экономия ~2 сек на сети к БД).
+        page_size = req.max_rows
+
+        async def _timed(key, coro):
+            t0 = time.perf_counter()
+            try:
+                r = await coro
+                timings[key] = _ms(t0)
+                return r, None
+            except Exception as e:
+                timings[key] = _ms(t0)
+                return None, e
+
+        plan_r, count_r, rows_r = await asyncio.gather(
+            _timed("explain", self.db.explain(safe_sql)),
+            _timed("count", self._count_rows(safe_sql)),
+            _timed("fetch", self.db.fetch_readonly(self._page_sql(safe_sql, max(req.page, 1), page_size))),
+        )
+        plan, plan_err = plan_r
+        total, count_err = count_r
+        page_rows, fetch_err = rows_r
+        if count_err is not None:
+            return self._error("DB_EXECUTION", f"Ошибка подсчёта строк: {count_err}",
+                               query_id, start, sql=safe_sql)
+        if fetch_err is not None:
+            return self._error("DB_EXECUTION", f"Ошибка выполнения запроса: {fetch_err}",
+                               query_id, start, sql=safe_sql)
+        total = int(total)
+
         if plan.get("total_cost", 0.0) > self.settings.explain_max_cost:
             return self._error(
                 "NEEDS_REFINEMENT",
@@ -164,12 +234,6 @@ class Orchestrator:
                 "категория, статус), чтобы я построил более дешёвый запрос.",
                 query_id, start, sql=safe_sql, meta=self._judge_meta(judge_info),
             )
-
-        try:
-            # Шаг 4: узнаём ОБЩЕЕ число строк (без LIMIT) для настоящей пагинации.
-            total = await self._count_rows(safe_sql)
-        except Exception as e:
-            return self._error("DB_EXECUTION", f"Ошибка подсчёта строк: {e}", query_id, start, sql=safe_sql)
 
         truncated = meta.get("truncated", False)
         if total == 0:
@@ -180,17 +244,19 @@ class Orchestrator:
                 query_id, start, sql=safe_sql, meta=self._judge_meta(judge_info),
             )
 
-        # Пагинация: страница из БД через LIMIT/OFFSET.
-        page_size = req.max_rows
+        # Пагинация: уточняем страницу по общему числу (перезапрос только если вышли за диапазон).
         total_pages = max(1, math.ceil(total / page_size))
         page = min(max(req.page, 1), total_pages)
-        try:
+        if page != max(req.page, 1):
+            _t = time.perf_counter()
             page_rows = await self.db.fetch_readonly(self._page_sql(safe_sql, page, page_size))
-        except Exception as e:
-            return self._error("DB_EXECUTION", f"Ошибка выполнения запроса: {e}", query_id, start, sql=safe_sql)
+            timings["fetch"] = timings.get("fetch", 0.0) + _ms(_t)
 
         columns = list(page_rows[0].keys()) if page_rows else []
         data = [dict(r) for r in page_rows]
+        timings["summarize"] = 0
+
+        _log_timings(query_id, req.role.value, "success", timings, start)
 
         resp = ChatResponse(
             status="success",
@@ -280,10 +346,16 @@ class Orchestrator:
                                                           feedback, history)
             last_meta = meta
             ok = (not meta.get("unknown") and meta.get("is_valid")
-                  and meta.get("score", 0.0) >= self.settings.sql_judge_threshold)
+                  and meta.get("score", 0.0) >= self.settings.sql_judge_threshold
+                  and not _sql_is_fishy(req.question, sql))
             if ok:
                 return sql, meta, ""
-            feedback = f"Предыдущий SQL нелогичен ({meta.get('score')}): {meta.get('reason')}. Исправь."
+            if _sql_is_fishy(req.question, sql):
+                feedback = ("Ошибка: подсчёт СТУДЕНТОВ (должники/задолженность/сдал/учится) "
+                            "иди через students/enrollments (enrollments.passed=false), "
+                            "НЕ через staff/departments.")
+            else:
+                feedback = f"Предыдущий SQL нелогичен ({meta.get('score')}): {meta.get('reason')}. Исправь."
         suggestion = await self.llm.suggest_narrowing(req.question, schema, req.role.value, feedback)
         return None, last_meta, suggestion
 

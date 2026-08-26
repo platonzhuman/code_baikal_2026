@@ -4,6 +4,7 @@ import asyncio
 import time
 from collections import defaultdict, deque
 
+from app.core.logging import emit, sha
 from app.core.schemas import ChatResponse
 
 
@@ -55,10 +56,11 @@ class HistoryStore:
             self._threads.setdefault(session_id, []).append(entry)
         if self._db:
             try:
+                # В БД храним ХЭШ вопроса (не текст) — как требует политика ПДн/спецификация логирования.
                 await self._db.execute(
                     "INSERT INTO chat_messages (query_id, session_id, role, question, answer, sql, status) "
                     "VALUES ($1,$2,$3,$4,'','','processing') ON CONFLICT (query_id) DO NOTHING",
-                    [query_id, session_id, role, question],
+                    [query_id, session_id, role, sha(question)],
                 )
             except Exception:
                 pass

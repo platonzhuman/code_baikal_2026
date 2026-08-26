@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import time
 
 import asyncpg
 
 from app.config import get_settings
+from app.core.logging import emit
 
 
 class Database:
@@ -36,6 +38,7 @@ class Database:
         if not self._pool:
             raise RuntimeError("DB pool is not connected")
 
+        t0 = time.perf_counter()
         async with self._pool.acquire() as conn:
             # statement_timeout в миллисекундах + read-only на уровне транзакции
             timeout_ms = get_settings().statement_timeout_ms
@@ -43,7 +46,11 @@ class Database:
                 await conn.execute(f"SET LOCAL statement_timeout = {timeout_ms}")
                 await conn.execute("SET LOCAL default_transaction_read_only = ON")
                 await conn.execute("SET LOCAL transaction_read_only = ON")
-                return await conn.fetch(query, *(params or []))
+                rows = await conn.fetch(query, *(params or []))
+        emit("DEBUG", "db", "db_query", data={"sql_preview": query[:200],
+                                              "row_count": len(rows),
+                                              "execution_time_ms": round((time.perf_counter() - t0) * 1000, 2)})
+        return rows
 
     async def healthcheck(self) -> bool:
         try:

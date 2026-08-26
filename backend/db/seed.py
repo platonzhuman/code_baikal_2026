@@ -73,9 +73,17 @@ async def seed(conn: asyncpg.Connection) -> None:
         fac_rows.append((fac_name, None))
 
     dept_rows = []
+    # Реалистичные названия кафедр по факультетам (2 на факультет)
+    DEPTS_BY_FACULTY = {
+        "Информационные технологии": ["Кафедра программной инженерии", "Кафедра информационных систем"],
+        "Экономика": ["Кафедра экономики", "Кафедра финансов и кредита"],
+        "Филология": ["Кафедра филологии", "Кафедра лингвистики"],
+        "Физика": ["Кафедра физики", "Кафедра прикладной математики"],
+        "Право": ["Кафедра права", "Кафедра юридических наук"],
+    }
     for fac_name in FACULTIES:
-        for _ in range(2):
-            dept_rows.append((None, f"Кафедра {random.choice(DOCTORS)}", None))
+        for dname in DEPTS_BY_FACULTY.get(fac_name, ["Кафедра"]):
+            dept_rows.append((None, dname, None))
 
     await conn.executemany(
         "INSERT INTO staff (fio, post, department_id, email, phone) VALUES ($1,$2,$3,$4,$5)",
@@ -91,7 +99,8 @@ async def seed(conn: asyncpg.Connection) -> None:
     faculty_ids = [r["id"] for r in faculty_ids]
 
     for i, (_, dname, _) in enumerate(dept_rows):
-        dept_rows[i] = (faculty_ids[i % len(faculty_ids)], dname, dean_ids[i % len(dean_ids)])
+        # 2 кафедры на факультет -> i // 2 (именно i//2, а не i%5 — иначе сдвиг!)
+        dept_rows[i] = (faculty_ids[i // 2], dname, dean_ids[i // 2])
     await conn.executemany(
         "INSERT INTO departments (faculty_id, name, head_id) VALUES ($1,$2,$3)",
         dept_rows)
@@ -109,24 +118,32 @@ async def seed(conn: asyncpg.Connection) -> None:
         teacher_rows)
     teacher_ids = [r["id"] for r in await conn.fetch("SELECT id FROM staff WHERE post='преподаватель' ORDER BY id")]
 
-    # ---- 2) Направления (реалистичные названия по факультету) ----
+    # ---- 2) Направления (реалистичные названия по факультету + кафедра) ----
     names_by_fac: dict[int, list[str]] = {}
     for i, fac_name in enumerate(FACULTIES):
         names_by_fac[faculty_ids[i]] = PROGRAMS_BY_FACULTY.get(fac_name, [fac_name])
+    # кафедры по факультету (id -> список id кафедр)
+    depts_rows_db = await conn.fetch("SELECT id, faculty_id FROM departments ORDER BY id")
+    depts_by_fac: dict[int, list[int]] = {}
+    for r in depts_rows_db:
+        depts_by_fac.setdefault(r["faculty_id"], []).append(r["id"])
+
     prog_rows = []
     for route in range(len(faculty_ids) * 3):
         fac_id = faculty_ids[route % len(faculty_ids)]
         pool = names_by_fac[fac_id]
         pname = pool[route // len(faculty_ids) % len(pool)]
-        prog_rows.append((fac_id,
+        dept_pool = depts_by_fac.get(fac_id, [None])
+        dep_id = dept_pool[(route // len(faculty_ids)) % len(dept_pool)]
+        prog_rows.append((fac_id, dep_id,
                           f"{random.randint(9,15):02d}.{random.randint(2,4):02d}.{random.randint(2,4):02d}",
                           pname,
                           random.randint(20, 60), random.randint(10, 40),
                           random.randint(150, 250),
                           random.choice(["fulltime", "parttime"])))
     await conn.executemany(
-        "INSERT INTO programs (faculty_id, code, name, budget_seats, paid_seats, min_score_prev, form) "
-        "VALUES ($1,$2,$3,$4,$5,$6,$7)",
+        "INSERT INTO programs (faculty_id, department_id, code, name, budget_seats, paid_seats, min_score_prev, form) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
         prog_rows)
     program_ids = [r["id"] for r in await conn.fetch("SELECT id FROM programs ORDER BY id")]
 

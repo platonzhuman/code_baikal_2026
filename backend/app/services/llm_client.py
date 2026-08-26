@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import json
 import re
 
@@ -11,6 +12,7 @@ from sqlglot import exp
 from sqlglot.errors import ParseError
 
 from app.config import get_settings
+from app.core.logging import emit, log_llm_failure, log_llm_response
 from app.core.schema_sanitizer import build_system_prompt
 from app.core.security import ALLOWED_TABLES, SENSITIVE_COLUMNS
 
@@ -155,6 +157,7 @@ class LLMClient:
 
         last_err: Exception | None = None
         for attempt in range(self._retries + 1):
+            t0 = time.perf_counter()
             try:
                 async with httpx.AsyncClient(
                     timeout=httpx.Timeout(self._timeout, connect=self._connect_timeout)
@@ -165,19 +168,29 @@ class LLMClient:
                     return await self._call_llm(system, user, json_mode=False)
                 resp.raise_for_status()
                 data = resp.json()
+                latency = round((time.perf_counter() - t0) * 1000, 2)
+                emit("DEBUG", "llm_client", "LLM call",
+                     data={"model": self._model, "endpoint": url.split("/v1")[-1],
+                           "retry_count": attempt, "latency_ms": latency})
+                log_llm_response(self._model, data.get("usage") if isinstance(data, dict) else None,
+                                 latency, None)
                 return data["choices"][0]["message"]["content"]
             except (KeyError, IndexError, TypeError) as e:
+                log_llm_failure(e, attempt, None, stage="parse")
                 raise LLMFormatError(f"Неожиданный формат ответа API: {e}") from e
             except httpx.HTTPStatusError as e:
                 if resp.status_code in (400, 401, 403, 404, 429) and attempt == self._retries:
+                    log_llm_failure(e, attempt, None, stage="http")
                     raise LLMUnavailable(f"API {resp.status_code}: {resp.text[:200]}") from e
                 last_err = e
             except httpx.HTTPError as e:
                 last_err = e
             except json.JSONDecodeError as e:
+                log_llm_failure(e, attempt, None, stage="parse")
                 raise LLMFormatError(f"Ответ API не JSON: {e}") from e
             if attempt < self._retries:
                 await asyncio.sleep(min(2 ** attempt, 4))
+        log_llm_failure(last_err, self._retries, None, stage="network")
         raise LLMUnavailable(f"LLM недоступен после {self._retries + 1} попыток: {last_err}")
 
     # ---------------- LLM №1: генерация SQL ----------------
@@ -199,6 +212,8 @@ class LLMClient:
                 return sql, meta
             except (LLMUnavailable, LLMFormatError, ValidationError, json.JSONDecodeError) as e:
                 # Сбой реальной модели -> безопасный откат на mock, система жива.
+                emit("WARN", "llm_client", "mock fallback (generate)",
+                     data={"reason": str(e)[:160]})
                 sql = self._mock_generate(question, role)
                 check = self._mock_check(sql)
                 return sql, {"model": "mock-generator", "fallback": str(e)[:200],

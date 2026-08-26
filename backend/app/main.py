@@ -11,6 +11,7 @@ from app.core.audit import log_query
 from app.core.auth import check_login, make_token, verify_token
 from app.core.db import Database
 from app.core.history import HistoryStore, RateLimiter, build_store
+from app.core.logging import emit, sha
 from app.core.schemas import (ChatRequest, ChatResponse, HealthResponse,
                               LoginRequest, LoginResponse, Role)
 from app.core.schema_loader import load_schema
@@ -71,22 +72,36 @@ async def root():
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
+    # Сквозной trace: x-trace-id от фронта или query_id (одинаков во всех компонентах).
+    trace_id = request.headers.get("x-trace-id") or req.query_id or str(uuid4())
+    qid = trace_id
+    ip = request.client.host if request.client else "anon"
+    ua = request.headers.get("user-agent", "")
+    auth_method = "token" if request.headers.get("authorization") else "guest"
+
     # Rate-limit по session_id (или IP). Сбой: слишком часто -> 429.
-    key = req.session_id or (request.client.host if request.client else "anon")
+    key = req.session_id or ip
     if not await app.state.rate_limiter.allow(key):
+        emit("WARN", "main", "rate_limit_exceeded", trace_id=trace_id, session_id=req.session_id,
+             role=req.role.value, data={"key": key, "limit": settings.rate_limit_per_minute})
         raise HTTPException(status_code=429, detail="Слишком много запросов. Попробуйте чуть позже.")
+
+    emit("INFO", "main", "chat_received", trace_id=trace_id, query_id=req.query_id,
+         session_id=req.session_id, role=req.role.value,
+         data={"client_ip": ip, "user_agent": ua[:120], "auth_method": auth_method,
+               "question_hash": sha(req.question)})
 
     # Дедупликация: если такой query_id уже обработан — вернуть готовый ответ.
     if req.query_id:
         cached = await app.state.store.get_cached(req.query_id)
         if cached is not None:
+            emit("DEBUG", "main", "dedup_cache_hit", trace_id=trace_id, query_id=req.query_id)
             return cached
 
     # Роль определяет СЕРВЕР: по токену из заголовка Authorization; иначе роль клиента.
     req.role = await _resolve_role(req, request)
 
     # Статус «в обработке» (чтобы при обрыве фронт видел незавершённый запрос).
-    qid = req.query_id or str(uuid4())
     await app.state.store.begin(req.session_id, qid, req.role.value, req.question)
 
     # Контекст разговора: только УСПЕШНЫЕ ходы (без отказов/ошибок — иначе они
@@ -98,10 +113,27 @@ async def chat(req: ChatRequest, request: Request):
         if m.get("status", "success") == "success"
     ][-2:]
 
-    response = await app.state.orchestrator.chat(req, query_id=qid, history=history)
+    try:
+        response = await app.state.orchestrator.chat(req, query_id=qid, history=history)
+    except Exception as e:
+        emit("ERROR", "main", "chat_error", trace_id=trace_id, query_id=qid,
+             session_id=req.session_id, role=req.role.value,
+             data={"error": str(e)[:200]})
+        raise
     await app.state.store.emit(
         session_id=req.session_id, req_question=req.question, req_role=req.role.value,
         response=response,
+    )
+    emit("INFO", "main", "chat_completed", trace_id=trace_id, query_id=response.meta.query_id,
+         session_id=req.session_id, role=req.role.value,
+         data={"status": response.status, "total_latency_ms": response.meta.latency_ms,
+               "sql_preview": (response.sql or "")[:200],
+               "row_count": response.result.row_count if response.result else 0})
+    log_query(
+        session_id=req.session_id, query_id=response.meta.query_id, role=req.role.value,
+        question=req.question, status=response.status, sql=response.sql,
+        latency_ms=response.meta.latency_ms,
+        error=response.error.message if response.error else None,
     )
     log_query(
         session_id=req.session_id, query_id=response.meta.query_id, role=req.role.value,
@@ -141,6 +173,8 @@ async def login(req: LoginRequest):
     """Вход по общему логину/паролю роли -> роль + токен.
     Абитуриент — гость (вход не нужен). Студент/преподаватель/сотрудник — по кредам из .env."""
     role = check_login(req.login, req.password)
+    emit("INFO", "auth", "login_attempt", role=role or "-",
+         data={"login": req.login[:32], "success": role is not None, "role": role or "-"})
     if not role:
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
     return LoginResponse(role=role, token=make_token(role))

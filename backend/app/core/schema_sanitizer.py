@@ -79,7 +79,8 @@ def get_sanitized_schema(role: str) -> str:
 
     Строится из загруженной структуры БД (без хардкода таблиц/колонок).
     """
-    lines = ["Схема БД (доступные для запроса поля), PK, FK — для JOIN:"]
+    lines = [DATA_STORY, ""]
+    lines.append("Схема БД — таблицы, поля и связи (доступные по роли):")
     allowed = ROLE_ALLOWED_TABLES.get(role, set())
     for table in all_tables():
         if table not in allowed:
@@ -88,17 +89,117 @@ def get_sanitized_schema(role: str) -> str:
         fks = _fks(table)
         mark = "  [только агрегаты]" if (role in ROLE_AGGREGATE_ONLY and table in LEARNER_TABLES) else ""
         lines.append(f"- {table} ({', '.join(visible)}){mark}")
-        if fks:
-            lines.append(f"    внешние ключи: {', '.join(fks)}")
+        desc, col_info = TABLES_INFO.get(table, ("", {}))
+        if desc:
+            lines.append(f"    {desc}")
+        for c in _columns(table):
+            if c["name"] not in visible:
+                continue
+            meaning = col_info.get(c["name"], "")
+            marks = []
+            if c.get("is_pk"):
+                marks.append("PK")
+            if c.get("is_fk"):
+                marks.append("FK")
+            detail = f"{c['name']}({c['type']}{', ' + ', '.join(marks) if marks else ''})"
+            if meaning:
+                detail += f"={meaning}"
+            lines.append(f"    · {detail}")
+
+    # Связи (только для таблиц, доступных роли)
+    allowed_rel = [r for r in RELATIONS if r.split(".")[0] in allowed]
+    if allowed_rel:
+        lines.append("СВЯЗИ: " + "; ".join(allowed_rel))
 
     if role in ROLE_AGGREGATE_ONLY:
         lines.append(
-            "\nВАЖНО (роль: %s): по таблицам students, applicants, enrollments допустимы "
-            "ТОЛЬКО агрегаты (COUNT, AVG, MIN, MAX, GROUP BY). Не выбирай и не фильтруй "
-            "по неагрегированным полям этих таблиц, чтобы нельзя было идентифицировать "
-            "конкретного обучающегося. Поля с ПДн недоступны." % role
+            "\nВАЖНО (роль: %s): по students/аpplicants/enrollments — ТОЛЬКО агрегаты "
+            "(COUNT/AVG/GROUP BY); ПДн-поля недоступны." % role
         )
     return "\n".join(lines)
+
+
+# ============================================================
+# СЕМАНТИКА БД (что означает каждая таблица/поле, как таблицы связаны)
+# ============================================================
+TABLES_INFO: dict[str, tuple[str, dict[str, str]]] = {
+    "faculties": (
+        "факультеты университета",
+        {"id": "идентификатор", "name": "название факультета",
+         "dean_id": "декан"},
+    ),
+    "departments": (
+        "кафедры, входят в факультет",
+        {"id": "идентификатор", "faculty_id": "факультет",
+         "name": "название кафедры", "head_id": "завкафедрой"},
+    ),
+    "programs": (
+        "направления подготовки (специальности), закреплены за кафедрой",
+        {"id": "идентификатор", "faculty_id": "факультет",
+         "department_id": "кафедра (ведёт направление)",
+         "code": "код направления (напр. 09.03.02)", "name": "название направления",
+         "budget_seats": "бюджетные места", "paid_seats": "платные места",
+         "min_score_prev": "проходной балл прошлых лет",
+         "form": "форма обучения: fulltime=очная, parttime=заочная"},
+    ),
+    "students": (
+        "обучающиеся университета (личные поля скрыты политикой ПДн)",
+        {"id": "идентификатор", "program_id": "направление",
+         "course": "номер курса (1..5)", "gpa": "средний балл (GPA)",
+         "status": "active=учится, expelled=отчислен, academic_leave=академ. отпуск",
+         "source": "budget=бюджет, paid=платно",
+         "enrolled_year": "год поступления",
+         "status_since_year": "год смены статуса (отчисление/академ)"},
+    ),
+    "applicants": (
+        "абитуриенты (личные поля скрыты политикой ПДн)",
+        {"id": "идентификатор", "program_id": "направление",
+         "ege_score": "суммарный балл ЕГЭ", "submitted_date": "дата подачи документов",
+         "status": "submitted=подан, enrolled=зачислен, rejected=отклонён",
+         "source": "budget=бюджет, paid=платно"},
+    ),
+    "courses": (
+        "дисциплины (учебные курсы)",
+        {"id": "идентификатор", "teacher_id": "преподаватель",
+         "program_id": "направление", "name": "название дисциплины",
+         "credits": "кредиты", "semester": "номер семестра (1..2)"},
+    ),
+    "enrollments": (
+        "успеваемость/оценки по дисциплинам (связка студентов и курсов)",
+        {"id": "идентификатор", "student_id": "студент",
+         "course_id": "дисциплина",
+         "semester": "'<год> spring|fall' (пример '2025 spring')",
+         "grade": "оценка (балл)", "passed": "сдал=true, не сдал=false",
+         "attendance": "посещаемость (%)"},
+    ),
+    "staff": (
+        "сотрудники: преподаватели, деканы, завкафедрами",
+        {"id": "идентификатор", "post": "должность (декан/преподаватель/...)",
+         "department_id": "кафедра → departments.id"},
+    ),
+}
+
+# Связи между таблицами (для JOIN) — человекочитаемо
+RELATIONS = [
+    "departments.faculty_id → faculties.id",
+    "programs.faculty_id → faculties.id",
+    "programs.department_id → departments.id",
+    "students.program_id → programs.id",
+    "applicants.program_id → programs.id",
+    "courses.program_id → programs.id",
+    "courses.teacher_id → staff.id",
+    "staff.department_id → departments.id",
+    "enrollments.student_id → students.id",
+    "enrollments.course_id → courses.id",
+    "faculties.dean_id → staff.id",
+    "departments.head_id → staff.id",
+]
+
+# Основной «сюжет» данных (для контекста)
+DATA_STORY = (
+    "Логика: факультеты → кафедры и направления; студенты/абитуриенты → направления; "
+    "дисциплины → направления; успеваемость → студенты+дисциплины; персонал в staff."
+)
 
 
 # Few-shot примеры по ролям: (вопрос, корректный SQL). Столбцы/таблицы берутся из схемы.
@@ -133,6 +234,11 @@ FEW_SHOT: dict[str, list[tuple[str, str]]] = {
          "JOIN programs p ON s.program_id = p.id JOIN faculties f ON p.faculty_id = f.id "
          "WHERE f.name = 'Информационные технологии' AND s.status = 'active' "
          "AND s.source = 'budget' GROUP BY f.name"),
+        ("Сколько должников учится на кафедре Программная инженерия?",
+         "SELECT d.name, COUNT(DISTINCT e.student_id) AS debtors FROM enrollments e "
+         "JOIN students s ON e.student_id = s.id JOIN programs p ON s.program_id = p.id "
+         "JOIN departments d ON p.department_id = d.id "
+         "WHERE e.passed = false AND lower(d.name) LIKE '%программн%инженер%' GROUP BY d.name"),
     ],
 }
 
@@ -142,26 +248,39 @@ ROLE_LABEL = {"applicant": "абитуриент", "student": "студент",
 # Словарь значений полей (русский термин -> значение в БД). КРИТИЧНО: модель не должна
 # угадывать статусы/типы сама — иначе путает 'active' и 'отчислен'.
 VALUE_MAP = (
-    "СЛОВАРЬ ЗНАЧЕНИЙ (используй ТОЛЬКО эти значения, не выдумывай):\n"
-    "- students.status: активный/обучается/учится='active', ОТЧИСЛЕН='expelled', "
-    "академ. отпуск='academic_leave';\n"
-    "- applicants.status: подан='submitted', зачислен='enrolled', отклонён='rejected';\n"
-    "- source: бюджет='budget', платно='paid';\n"
-    "- enrollments.passed: сдал=true, не сдал/задолженность=false;\n"
-    "- programs.form: очная='fulltime', заочная='parttime';\n"
-    "- СЕМЕСТРЫ: 1-й (осенний) семестр = '... fall'; 2-й (весенний) семестр = '... spring'; "
-    "формат строки: '<год> spring' или '<год> fall', напр. '2025 spring'. Если юзер говорит "
-    "'второй семестр 2025' → это '2025 spring';\n"
-    "- ГОДЫ для студентов: students.enrolled_year — год поступления; "
-    "students.status_since_year — год изменения статуса (отчисление/академ);\n"
-    "- ФАКУЛЬТЕТЫ (названия ТОЧНО как в БД, не сокращай): Информационные технологии, "
-    "Экономика, Филология, Физика, Право;\n"
-    "- РАЗЛИЧАЙ ФАКУЛЬТЕТ и ПРОГРАММУ: 'факультет ...' / 'на ... факультете' / просто 'Экономика' "
-    "→ faculties.name; 'направление/программа ...' → programs.name.\n"
-    "- СЛОЖНЫЕ ЗАПРОСЫ ТАК: 'сдали ВСЕ экзамены (семестр)' → NOT EXISTS с e.passed=false по "
-    "этому студенту и семестру; 'хотя бы один не сдал' → EXISTS с e.passed=false; "
-    "'сдали хотя бы один' → EXISTS с e.passed=true."
+    "СЛОВАРЬ ЗНАЧЕНИЙ:\n"
+    "status(students): active=учится, expelled=ОТЧИСЛЕН, academic_leave=академ;\n"
+    "status(applicants): submitted=подан, enrolled=зачислен, rejected=отклонён;\n"
+    "source: budget=бюджет, paid=платно;\n"
+    "passed: true=сдал, false=не сдал/долг;\n"
+    "form: fulltime=очная, parttime=заочная;\n"
+    "семестр: 1-й/осенний='... fall', 2-й/весенний='... spring' (2026  весна='2026 spring');\n"
+    "годы: enrolled_year=год поступления, status_since_year=год отчисления/академа;\n"
+    "факультеты: Информационные технологии, Экономика, Филология, Физика, Право (не сокращай);\n"
+    "факультет→faculties.name; направление/программа→programs.name; кафедра→departments.name "
+    "(или programs.department_id).\n"
+    "LIKE по названиям — по КОРНЯМ (иной падеж!): «программная инженерия» → LIKE '%программн%инженер%'.\n"
+    "ПО УМОЛЧАНИЮ (если в вопросе не указано):\n"
+    "· год → 2026 (максимальный год в данных); семестр без года → '2026 spring';\n"
+    "· «обучается/учится» → status='active' БЕЗ фильтра по году;\n"
+    "· «бюджет/платно/места» без уточнения → считай ОБА;\n"
+    "· «форма обучения» без указания → не фильтруй;\n"
+    "· «должники/задолженность» без семестра → за ВСЕ семестры (без фильтра семестра);\n"
+    "· «средний балл/проходной» без уточнения → по всем направлениям.\n"
+    "СИНОНИМЫ (переводи так):\n"
+    "· ученик/учащийся/учат(ся)/зачислен → students; абитуриент/поступающий → applicants;\n"
+    "· педагог/преподаватель/лектор → staff (post='преподаватель');\n"
+    "· оценка/отметка/балл → enrollments.grade; сессия/успеваемость → enrollments;\n"
+    "· направление/специальность/специализация → programs;\n"
+    "· факультет/институт → faculties; кафедра/отделение → departments;\n"
+    "· бюджет/бюджетник → source='budget'; платно/платник → source='paid';\n"
+    "· задолженность/хвост → e.passed=false; отчислен/вылетел → status='expelled';\n"
+    "· ИТ/айтишники/программисты → 'Информационные технологии';\n"
+    "· «за последние N дней» → submitted_date >= (max(submitted_date) - N дней); "
+    "«за последние N лет» → год >= (максимальный год - N + 1);\n"
+    "· «второй семестр» → '... spring'; «первый/осенний» → '... fall'."
 )
+
 
 
 def build_system_prompt(role: str) -> str:
@@ -178,22 +297,17 @@ def build_system_prompt(role: str) -> str:
         "- если данных нет в схеме или вопрос не про БД — верни \"UNKNOWN\" (не выдумывай);",
         "- сложные запросы: JOIN 3+ таблиц, GROUP BY, оконные функции;",
         "- широкий запрос (без фильтра/агрегата) — добавь LIMIT.",
-        VALUE_MAP,
-    "- ПРАВИЛО 'active' применяй ТОЛЬКО к вопросам вида «сколько студентов ОБУЧАЕТСЯ / "
-    "учатся / численность студентов»: добавляй s.status='active' и группируй по факультету. "
-    "Для «ОТЧИСЛЕН» используй s.status='expelled'; для «задолженность» — e.passed=false; "
-    "для «зачислен на бюджет» — a.status='enrolled' AND a.source='budget'.\n"
-    "- «В ЭТОМ/ТЕКУЩЕМ ГОДУ» про студентов: это и есть АКТИВНЫЕ (status='active') — НЕ добавляй "
-    "фильтр по enrolled_year/status_since_year (иначе ответ станет неверным). "
-    "Если явно «ПОСТУПИЛИ в X году» — тогда enrolled_year=X; «отчислены в X» — status_since_year=X.",
-        "- Если пользователь пишет по-русски (например, «отчислен», «бюджет») — подставь "
-        "соответствующее значение из СЛОВАРЯ ЗНАЧЕНИЙ выше.",
         "",
+        # Примеры ближе к началу — модели их заметно виднее, чем в конце.
         f"ПРИМЕРЫ (few-shot) для роли {role}:",
     ]
     for q, sql in FEW_SHOT.get(role, []):
         lines.append(f'Вопрос: "{q}"')
         lines.append(f"SQL: {sql}")
+    lines.append("")
+    lines.append(VALUE_MAP)
+    lines.append("- Если пользователь пишет по-русски (например, «отчислен», «бюджет») — подставь "
+                 "соответствующее значение из СЛОВАРЯ ЗНАЧЕНИЙ выше.")
     lines.append("")
     lines.append(get_sanitized_schema(role))
     lines.append("")
