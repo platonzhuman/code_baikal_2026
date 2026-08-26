@@ -3,13 +3,7 @@ import { sendChat } from '../api'
 import { maskResult } from '../pii'
 import { downloadCsv } from '../csv'
 import { loadThreads, saveThreads } from '../threads'
-import { isLoggedIn, getSessionId } from '../auth'
-
-const STARTERS = [
-  'Какие факультеты есть в университете?',
-  'Сколько бюджетных мест в этом году?',
-  'Какой средний балл зачисления на бюджет?',
-]
+import { getSessionId } from '../auth'
 
 function when(ts) {
   if (!ts) return ''
@@ -19,26 +13,6 @@ function when(ts) {
   const hrs = Math.round(min / 60)
   if (hrs < 24) return `${hrs} ч`
   return new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
-}
-
-function explainBlock(explanation) {
-  if (!explanation) return null
-  const keys = ['tables', 'joins', 'filters', 'aggregates', 'constraints']
-  if (!keys.some((k) => explanation[k]?.length)) return null
-  const labels = {
-    tables: 'таблицы',
-    joins: 'JOIN',
-    filters: 'фильтры',
-    aggregates: 'агрегаты',
-    constraints: 'ограничения',
-  }
-  return (
-    <ul className="explain">
-      {keys.map((k) => (
-        <li key={k}>{labels[k]}: {(explanation[k] || []).join(', ') || '—'}</li>
-      ))}
-    </ul>
-  )
 }
 
 function chipLabel(item) {
@@ -105,6 +79,13 @@ export default function Chat() {
     recover()
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    const q = sessionStorage.getItem('gigachads_prefill')
+    if (!q) return
+    sessionStorage.removeItem('gigachads_prefill')
+    queueMicrotask(() => submit(q))
   }, [])
 
   function persist(next) {
@@ -181,7 +162,6 @@ export default function Chat() {
           result: maskResult(data.result),
           warning: data.result?.warning,
           truncated: data.result?.truncated,
-          explanation: data.explanation,
           suggested: data.result?.suggested_filters,
         },
       ])
@@ -294,7 +274,6 @@ export default function Chat() {
                   <pre>{m.sql}</pre>
                 </div>
               )}
-              {explainBlock(m.explanation)}
             </article>
           ))}
           {loading && (
@@ -305,22 +284,6 @@ export default function Chat() {
           )}
           <div ref={bottomRef} />
         </div>
-
-        {!isLoggedIn() && (
-          <div className="starters">
-            {STARTERS.map((q) => (
-              <button
-                key={q}
-                type="button"
-                className="starter"
-                disabled={loading}
-                onClick={() => submit(q)}
-              >
-                {q}
-              </button>
-            ))}
-          </div>
-        )}
 
         <form
           className="composer glass"
