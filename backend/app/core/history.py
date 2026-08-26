@@ -70,6 +70,7 @@ class HistoryStore:
             "query_id": query_id, "session_id": session_id, "role": req_role,
             "question": req_question, "answer": response.text, "sql": response.sql,
             "status": response.status,
+            "latency_ms": response.meta.latency_ms if response.meta else 0,
             "error": response.error.message if response.error else None,
             "created_at": time.time(),
         }

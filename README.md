@@ -20,14 +20,18 @@ SQL и таблицу результата.
                                         │
                       ┌─────────────────┼───────────────────┐
                       ▼                 ▼                   ▼
-             [LLM: генератор + судья]  [AST-валидатор]  [PostgreSQL READ ONLY]
+             [LLM: генератор + самосудья]  [AST-валидатор]  [PostgreSQL READ ONLY]
 ```
 
 - **Асинхронно** (async/await, `asyncpg` пул, семафор), параллельные запросы.
-- **Безопасность**: только SELECT, whitelist из 8 таблиц, запрет ПДн-столбцов,
+- **Один LLM-вызов на запрос**: модель генерирует SQL и сама оценивает его (score 0..1);
+  жёсткие проверки (AST / whitelist / ПДн / EXPLAIN) — на бэкенде, без LLM.
+- **Безопасность**: только SELECT, whitelist из 8 таблиц (по ролям), запрет ПДн-столбцов,
   `statement_timeout`, READ ONLY подключение.
 - **ПДн**: `fio`, `email`, `phone`, `student_card_no`, `passport` не отдаются никому.
   По таблицам `students`, `applicants`, `enrollments` — только агрегаты (COUNT/AVG/GROUP BY).
+- **Производительность**: кэш ответов (повторные вопросы мгновенно), EXPLAIN-контроль
+  стоимости, лимит конкурентности, пагинация, авто-LIMIT.
 
 ---
 
@@ -48,7 +52,7 @@ SQL и таблицу результата.
 ```
 backend/
   app/
-    main.py                  # FastAPI: /health, /chat, /login, /schema, /logs, /history
+    main.py                  # FastAPI: /health, /chat, /login, /schema, /logs, /history, /analytics
     config.py                # настройки из .env (pydantic-settings)
     core/
       schemas.py             # контракт API (pydantic) + роли
@@ -59,9 +63,10 @@ backend/
       audit.py               # аудит-лог запросов в файл (без ПДн)
       db.py                  # asyncpg пул, READ ONLY, statement_timeout, EXPLAIN
       history.py             # история диалогов (perсистентно в chat_messages) + rate-limit
+      analytics.py           # сводная аналитика запросов (темы/роли/отказы/p95)
     services/
-      llm_client.py          # LLM: генератор, судья 0..1, суммаризатор, сужение, explanation
-      orchestrator.py        # цепочка: вопрос → LLM → судья → AST → БД → ответ
+      llm_client.py          # LLM: генератор + самосудья (score 0..1), шаблонный суммаризатор, сужение
+      orchestrator.py        # цепочка: вопрос → LLM(1 вызов) → AST → БД → ответ
       question_pool.py       # пул вопросов по ролям (демо/тесты)
   db/
     schema.sql               # схема БД (8 таблиц) + индексы + семантика
@@ -131,6 +136,11 @@ LLM_AUTH=bearer
 - `LLM_MODE=real` — только реальная модель;
 - `LLM_MODE=mock` — детерминированные заглушки (офлайн-демо, тесты);
 - `LLM_MODE=auto` — реальная при наличии ключа, иначе mock.
+
+Таймауты/производительность (в `.env`):
+- `LLM_TIMEOUT=20` — лимит ответа модели, `LLM_CONNECT_TIMEOUT=5` — fail-fast при сетевых сбоях;
+- `LLM_MAX_RETRIES=1` — одна повторная попытка (меньше «висящих» запросов).
+Повторные одинаковые вопросы обслуживаются из кэша (`CACHE_TTL`, по умолчанию 300 сек).
 
 ### 2. Установка зависимостей
 
@@ -206,6 +216,9 @@ curl "http://127.0.0.1:8000/schema?role=applicant"
 # История диалога и логи
 curl "http://127.0.0.1:8000/history?session_id=test"
 curl http://127.0.0.1:8000/logs
+
+# Сводная аналитика запросов (темы, роли, отказы, p50/p95)
+curl http://127.0.0.1:8000/analytics
 ```
 
 ### Контракт `POST /chat`

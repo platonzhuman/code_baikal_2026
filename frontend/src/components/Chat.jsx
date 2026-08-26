@@ -3,7 +3,7 @@ import { sendChat } from '../api'
 import { maskResult } from '../pii'
 import { downloadCsv } from '../csv'
 import { loadThreads, saveThreads } from '../threads'
-import { isLoggedIn } from '../auth'
+import { isLoggedIn, getSessionId } from '../auth'
 
 const STARTERS = [
   'Какие факультеты есть в университете?',
@@ -76,6 +76,36 @@ export default function Chat() {
     el.style.height = 'auto'
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 48), 180)}px`
   }, [input])
+
+  // Восстановление после обрыва сети: если последний вопрос юзера уже был обработан
+  // на сервере (есть ответ в истории), а в локальном чате ответа нет — догружаем.
+  useEffect(() => {
+    let alive = true
+    async function recover() {
+      try {
+        const res = await fetch(`/history?session_id=${getSessionId()}`)
+        const data = await res.json()
+        if (!alive) return
+        const items = data.items || []
+        const msgs = threads.find((t) => t.id === currentId)?.messages || []
+        const lastUser = [...msgs].reverse().find((m) => m.from === 'user')
+        if (!lastUser) return
+        const done = items.find(
+          (it) => (it.question || '').trim() === lastUser.text.trim() && it.answer && it.status === 'success',
+        )
+        if (!done) return
+        const hasReply = msgs.some((m) => m.from === 'assistant' && m.text === done.answer)
+        if (!hasReply) {
+          setMessages((prev) => [...prev, { from: 'assistant', text: done.answer, sql: done.sql, restored: true }])
+        }
+      } catch {
+        /* офлайн — просто пропускаем */
+      }
+    }
+    recover()
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   function persist(next) {
     saveThreads(next)
@@ -219,6 +249,7 @@ export default function Chat() {
             <article key={i} className={`msg ${m.from}${m.from === 'assistant' ? ' glass' : ''}`}>
               <span className="msg-label">{m.from === 'user' ? 'Вы' : 'Ассистент'}</span>
               <p>{m.text}</p>
+              {m.restored && <p className="warn">Восстановлено из истории сервера (ответ не дошёл при обрыве).</p>}
               {m.warning && <p className="warn">{m.warning}</p>}
               {!m.warning && m.truncated && <p className="warn">Запрос широкий: показаны первые строки.</p>}
               {m.suggested?.map((item) => {

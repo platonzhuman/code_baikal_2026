@@ -15,8 +15,9 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.openai.com/v1"
     llm_mode: str = "auto"          # auto | mock | real
     llm_auth: str = "auto"          # auto | bearer | apikey
-    llm_timeout: float = 30.0
-    llm_max_retries: int = 2
+    llm_timeout: float = 20.0
+    llm_connect_timeout: float = 5.0   # fail-fast при проблемах сети
+    llm_max_retries: int = 1
 
     # Yandex AI Studio / Cloud (fallback, если LLM_* не заполнены)
     yandex_cloud_api_key: str = ""
@@ -35,6 +36,9 @@ class Settings(BaseSettings):
 
     # Проверка стоимости запроса через EXPLAIN (производительность)
     explain_max_cost: float = 1e7   # выше — считаем слишком дорогим -> сузить
+
+    # Кэш ответов (повторные вопросы = мгновенно, экономия токенов)
+    cache_ttl: int = 300            # секунды
 
     # Серверная авторизация ролей. Общие логины/пароли на класс (хранятся в .env).
     # Абитуриент — гость (без логина); студент/преподаватель/сотрудник — по кредам.

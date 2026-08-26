@@ -57,6 +57,7 @@ class Meta(BaseModel):
     query_id: str = ""
     judge: Optional[dict] = None
     plan: Optional[dict] = None   # EXPLAIN: total_cost, plan_rows, node_type
+    cached: Optional[bool] = None  # true = ответ из кэша (повторный вопрос)
 
 
 class ErrorBlock(BaseModel):

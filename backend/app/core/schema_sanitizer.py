@@ -106,10 +106,6 @@ FEW_SHOT: dict[str, list[tuple[str, str]]] = {
     "applicant": [
         ("Сколько бюджетных мест на направлении «Информационные системы и технологии»?",
          "SELECT p.name, p.budget_seats FROM programs p WHERE lower(p.name) LIKE '%информационн%' LIMIT 50"),
-        ("Какой средний проходной балл прошлого года на программы факультета ИТ?",
-         "SELECT f.name, AVG(p.min_score_prev) AS avg_score FROM programs p "
-         "JOIN faculties f ON p.faculty_id = f.id WHERE lower(f.name) LIKE '%информационн%' "
-         "GROUP BY f.name LIMIT 50"),
         ("Сколько заявлений подано на «Экономику» в 2026 году?",
          "SELECT p.name, COUNT(a.id) AS applications FROM applicants a "
          "JOIN programs p ON a.program_id = p.id "
@@ -121,22 +117,22 @@ FEW_SHOT: dict[str, list[tuple[str, str]]] = {
          "SELECT f.name, COUNT(s.id) AS students FROM students s "
          "JOIN programs p ON s.program_id = p.id JOIN faculties f ON p.faculty_id = f.id "
          "WHERE lower(f.name) LIKE '%информационн%' AND s.status = 'active' GROUP BY f.name LIMIT 50"),
-        ("Какой средний GPA по факультету за весенний семестр?",
-         "SELECT f.name, AVG(e.grade) AS avg_gpa FROM enrollments e "
-         "JOIN courses c ON e.course_id = c.id JOIN programs p ON c.program_id = p.id "
-         "JOIN faculties f ON p.faculty_id = f.id "
-         "WHERE lower(e.semester) LIKE '%весн%' GROUP BY f.name LIMIT 50"),
-        ("Сколько студентов имеют академическую задолженность (не сдали экзамен)?",
-         "SELECT COUNT(DISTINCT e.student_id) AS debtors FROM enrollments e WHERE e.passed = false"),
         ("Сколько студентов отчислено на факультете информационных технологий в 2024 году?",
          "SELECT f.name, COUNT(s.id) AS expelled FROM students s "
          "JOIN programs p ON s.program_id = p.id JOIN faculties f ON p.faculty_id = f.id "
          "WHERE s.status = 'expelled' AND lower(f.name) LIKE '%информационн%' "
          "AND s.status_since_year = 2024 GROUP BY f.name LIMIT 50"),
-        ("Сколько абитуриентов зачислено на бюджет в 2024 году?",
-         "SELECT COUNT(*) AS enrolled_budget FROM applicants a "
-         "WHERE a.status = 'enrolled' AND a.source = 'budget' "
-         "AND EXTRACT(YEAR FROM a.submitted_date) = 2024"),
+        ("Сколько студентов факультета информационных технологий сдали все экзамены во 2 семестре 2025?",
+         "SELECT f.name, COUNT(DISTINCT s.id) AS passed_all FROM students s "
+         "JOIN programs p ON s.program_id = p.id JOIN faculties f ON p.faculty_id = f.id "
+         "WHERE f.name = 'Информационные технологии' AND s.status = 'active' AND NOT EXISTS "
+         "(SELECT 1 FROM enrollments e WHERE e.student_id = s.id AND e.semester = '2025 spring' "
+         "AND e.passed = false) GROUP BY f.name"),
+        ("Сколько студентов учится на бюджете на факультете информационных технологий в этом году?",
+         "SELECT f.name, COUNT(s.id) AS students FROM students s "
+         "JOIN programs p ON s.program_id = p.id JOIN faculties f ON p.faculty_id = f.id "
+         "WHERE f.name = 'Информационные технологии' AND s.status = 'active' "
+         "AND s.source = 'budget' GROUP BY f.name"),
     ],
 }
 
@@ -153,12 +149,18 @@ VALUE_MAP = (
     "- source: бюджет='budget', платно='paid';\n"
     "- enrollments.passed: сдал=true, не сдал/задолженность=false;\n"
     "- programs.form: очная='fulltime', заочная='parttime';\n"
-    "- семестр в enrollments.semester содержит 'spring'/'fall' и год, напр. '2026 spring';\n"
+    "- СЕМЕСТРЫ: 1-й (осенний) семестр = '... fall'; 2-й (весенний) семестр = '... spring'; "
+    "формат строки: '<год> spring' или '<год> fall', напр. '2025 spring'. Если юзер говорит "
+    "'второй семестр 2025' → это '2025 spring';\n"
     "- ГОДЫ для студентов: students.enrolled_year — год поступления; "
-    "students.status_since_year — год изменения статуса (отчисление/академ). "
-    "Для «в … году/2024 год» используй эти поля;\n"
-    "- факультеты (названия ТОЧНО как в БД, не сокращай): Информационные технологии, "
-    "Экономика, Филология, Физика, Право."
+    "students.status_since_year — год изменения статуса (отчисление/академ);\n"
+    "- ФАКУЛЬТЕТЫ (названия ТОЧНО как в БД, не сокращай): Информационные технологии, "
+    "Экономика, Филология, Физика, Право;\n"
+    "- РАЗЛИЧАЙ ФАКУЛЬТЕТ и ПРОГРАММУ: 'факультет ...' / 'на ... факультете' / просто 'Экономика' "
+    "→ faculties.name; 'направление/программа ...' → programs.name.\n"
+    "- СЛОЖНЫЕ ЗАПРОСЫ ТАК: 'сдали ВСЕ экзамены (семестр)' → NOT EXISTS с e.passed=false по "
+    "этому студенту и семестру; 'хотя бы один не сдал' → EXISTS с e.passed=false; "
+    "'сдали хотя бы один' → EXISTS с e.passed=true."
 )
 
 
@@ -177,10 +179,13 @@ def build_system_prompt(role: str) -> str:
         "- сложные запросы: JOIN 3+ таблиц, GROUP BY, оконные функции;",
         "- широкий запрос (без фильтра/агрегата) — добавь LIMIT.",
         VALUE_MAP,
-        "- ПРАВИЛО 'active' применяй ТОЛЬКО к вопросам вида «сколько студентов ОБУЧАЕТСЯ / "
-        "учатся / численность студентов»: добавляй s.status='active' и группируй по факультету. "
-        "Для «ОТЧИСЛЕН» используй s.status='expelled'; для «задолженность» — e.passed=false; "
-        "для «зачислен на бюджет» — a.status='enrolled' AND a.source='budget'.",
+    "- ПРАВИЛО 'active' применяй ТОЛЬКО к вопросам вида «сколько студентов ОБУЧАЕТСЯ / "
+    "учатся / численность студентов»: добавляй s.status='active' и группируй по факультету. "
+    "Для «ОТЧИСЛЕН» используй s.status='expelled'; для «задолженность» — e.passed=false; "
+    "для «зачислен на бюджет» — a.status='enrolled' AND a.source='budget'.\n"
+    "- «В ЭТОМ/ТЕКУЩЕМ ГОДУ» про студентов: это и есть АКТИВНЫЕ (status='active') — НЕ добавляй "
+    "фильтр по enrolled_year/status_since_year (иначе ответ станет неверным). "
+    "Если явно «ПОСТУПИЛИ в X году» — тогда enrolled_year=X; «отчислены в X» — status_since_year=X.",
         "- Если пользователь пишет по-русски (например, «отчислен», «бюджет») — подставь "
         "соответствующее значение из СЛОВАРЯ ЗНАЧЕНИЙ выше.",
         "",
@@ -194,6 +199,8 @@ def build_system_prompt(role: str) -> str:
     lines.append("")
     lines.append(
         "Верни ТОЛЬКО JSON без markdown-обёрток в формате: "
-        '{"sql": "<запрос>", "explanation": {"logic": "<кратко о логике запроса>"}}.'
+        '{"sql": "<запрос>", "explanation": {"logic": "<кратко о логике запроса>"}, '
+        '"score": <0..1 — насколько SQL уверенно соответствует вопросу>, '
+        '"reason": "<краткая причина оценки>"}.'
     )
     return "\n".join(lines)

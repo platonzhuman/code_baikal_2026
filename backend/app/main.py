@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.core.analytics import compute_analytics
 from app.core.audit import log_query
 from app.core.auth import check_login, make_token, verify_token
 from app.core.db import Database
@@ -88,7 +89,16 @@ async def chat(req: ChatRequest, request: Request):
     qid = req.query_id or str(uuid4())
     await app.state.store.begin(req.session_id, qid, req.role.value, req.question)
 
-    response = await app.state.orchestrator.chat(req, query_id=qid)
+    # Контекст разговора: только УСПЕШНЫЕ ходы (без отказов/ошибок — иначе они
+    # "отравляют" следующий запрос). Не более 4 последних (сжато для скорости).
+    thread = await app.state.store.get_thread(req.session_id)
+    history = [
+        {"question": m.get("question", ""), "answer": m.get("answer", "")}
+        for m in thread[-5:-1]
+        if m.get("status", "success") == "success"
+    ][-2:]
+
+    response = await app.state.orchestrator.chat(req, query_id=qid, history=history)
     await app.state.store.emit(
         session_id=req.session_id, req_question=req.question, req_role=req.role.value,
         response=response,
@@ -112,6 +122,12 @@ async def schema(role: str = Query("applicant")):
 async def logs():
     """Аналитика запросов (для страницы «Аналитика» у P3)."""
     return {"items": await app.state.store.all_logs()}
+
+
+@app.get("/analytics")
+async def analytics():
+    """Сводная аналитика: темы, роли, отказы, латентность p50/p95, топ-вопросы."""
+    return compute_analytics(await app.state.store.all_logs())
 
 
 @app.get("/history")

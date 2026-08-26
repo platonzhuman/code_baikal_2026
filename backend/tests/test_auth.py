@@ -5,9 +5,9 @@ from app.config import get_settings
 
 
 def test_check_login_valid_roles():
-    assert check_login("student", "student") == "student"
-    assert check_login("teacher", "teacher") == "teacher"
-    assert check_login("staff", "staff") == "staff"
+    assert check_login("student", "student2026") == "student"
+    assert check_login("teacher", "teacher2026") == "teacher"
+    assert check_login("staff", "admin2026") == "staff"
 
 
 def test_check_login_invalid():

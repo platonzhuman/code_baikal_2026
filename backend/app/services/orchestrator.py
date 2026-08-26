@@ -12,6 +12,59 @@ from app.core.schema_sanitizer import get_sanitized_schema
 from app.core.security import SQLValidationError, build_validator
 from app.services.llm_client import LLMClient
 
+# ---- Отказы (ясные, а не «уточните») ----
+_DESTRUCTIVE_VERBS = (
+    "удалит", "удали", "снести", "снеси", "изменит", "измени", "обнови", "встав",
+    "создай", "очисти", "стерет", "убить", "удалить",
+    "drop", "delete", "update", "insert", "alter", "truncate", "replace",
+)
+_REFUSAL_PII_HINTS_UNUSED = (
+    "fio", "персональн", "пдн", "чувствительн", "student_card", "sensitive", "паспорт",
+    "личн", "скрыт",
+)
+_REFUSAL_DML_HINTS = (
+    "не select", "несколько инструкций", "только select",
+    "insert ", "update ", "delete ", "drop ", "alter ", "truncate ",
+    "dml", "манипуляц",
+)
+
+# Явные просьбы про персональные данные — отказ сразу (но НЕ трогаем «фио преподавателей»).
+_PII_QUESTION_HINTS = (
+    "паспорт", "телефон", "почт", "email", "личн", "персональн",
+    "фио студент", "фио абитуриент", "фио всех", "зачётк", "студенч", "паспортн",
+)
+
+
+def _is_destructive(question: str) -> bool:
+    q = (question or "").lower()
+    return any(v in q for v in _DESTRUCTIVE_VERBS)
+
+
+def _asks_pii(question: str) -> bool:
+    q = (question or "").lower()
+    return any(v in q for v in _PII_QUESTION_HINTS)
+
+
+def classify_refusal(check: dict) -> tuple[str, str] | None:
+    """Если судья поймал нарушение правил — вернуть (код, сообщение) для чёткого отказа.
+
+    ПДн: реагируем ТОЛЬКО если причина прямо про выборку чувствительных полей
+    (иначе фраза «поля fio недоступны» из разбора схемы даёт ложный отказ).
+    """
+    reason = str(check.get("reason", "")).lower()
+    select_hint = any(w in reason for w in ("выборка", "выбирает", "select ", "столбц"))
+    pii_hint = any(w in reason for w in ("fio", "персональн", "паспорт", "чувствительн",
+                                         "пдн", "student_card", "ф.и.о", "контакт", "телефон"))
+    if select_hint and pii_hint:
+        return ("PDN_VIOLATION",
+                "Персональные данные недоступны. Система выдаёт только "
+                "обезличенные агрегированные показатели (COUNT/AVG), без ФИО и контактов.")
+    if any(h in reason for h in _REFUSAL_DML_HINTS):
+        return ("READ_ONLY",
+                "Доступ только для чтения. Удаление и изменение данных невозможны "
+                "— система выполняет только SELECT.")
+    return None
+
 
 class Orchestrator:
     """Цепочка: вопрос -> (LLM генерация + судья 0..1) -> AST-валидация -> БД -> ответ.
@@ -28,28 +81,70 @@ class Orchestrator:
         self.settings = get_settings()
         # Лимит конкурентности: не перегружаем LLM и БД параллельными запросами.
         self._sem = asyncio.Semaphore(self.settings.max_concurrent_queries)
+        # Кэш ответов: (role|question) -> (ts, ChatResponse). Повторные вопросы мгновенно.
+        self._cache: dict[str, tuple[float, ChatResponse]] = {}
+        self._cache_lock = asyncio.Lock()
 
-    async def chat(self, req: ChatRequest, query_id: str | None = None) -> ChatResponse:
+    async def _cached(self, role: str, question: str) -> ChatResponse | None:
+        async with self._cache_lock:
+            hit = self._cache.get(f"{role}|{question}")
+            if hit is None:
+                return None
+            ts, resp = hit
+            if time.time() - ts > self.settings.cache_ttl:
+                self._cache.pop(f"{role}|{question}", None)
+                return None
+            copy = resp.model_copy(deep=True)
+            copy.meta.latency_ms = 0
+            copy.meta.cached = True
+            return copy
+
+    async def _cache_put(self, role: str, question: str, resp: ChatResponse) -> None:
+        async with self._cache_lock:
+            self._cache[f"{role}|{question}"] = (time.time(), resp)
+
+    async def chat(self, req: ChatRequest, query_id: str | None = None,
+                   history: list[dict] | None = None) -> ChatResponse:
         async with self._sem:
-            return await self._chat(req, query_id)
+            return await self._chat(req, query_id, history)
 
-    async def _chat(self, req: ChatRequest, query_id: str | None = None) -> ChatResponse:
+    async def _chat(self, req: ChatRequest, query_id: str | None = None,
+                    history: list[dict] | None = None) -> ChatResponse:
         start = time.perf_counter()
         query_id = query_id or req.query_id or str(uuid.uuid4())
         schema = get_sanitized_schema(req.role.value)
 
-        # Шаг 1: генерация SQL + оценка судьи (0..1). Самоисправление при низком score.
-        raw_sql, judge_info, suggestion = await self._generate_acceptable_sql(req, schema)
+        # Кэш: повторный вопрос той же роли — мгновенно (без LLM/БД).
+        if not history:
+            cached = await self._cached(req.role.value, req.question)
+            if cached is not None:
+                return cached
+
+        # Отказ до LLM: явное желание изменить/удалить данные -> сразу "нет".
+        if _is_destructive(req.question):
+            return self._error(
+                "READ_ONLY",
+                "Доступ только для чтения. Удаление, изменение и создание данных "
+                "невозможны — система является безопасным коннектором «SELECT только».",
+                query_id, start, meta=self._judge_meta({}),
+            )
+        # Отказ до LLM: просьба про персональные данные (не ФИО преподавателей).
+        if _asks_pii(req.question):
+            return self._error(
+                "PDN_VIOLATION",
+                "Персональные данные недоступны. Система выдаёт только обезличенные "
+                "агрегированные показатели (COUNT/AVG), без ФИО, паспортов, телефонов "
+                "и контактов студентов и абитуриентов.",
+                query_id, start, meta=self._judge_meta({}),
+            )
+
+        # Шаг 1: генерация + САМОСУДЬЯ (1 вызов LLM, редко 2). Дальше — без LLM до ответа.
+        raw_sql, judge_info, suggestion = await self._generate_sql_candidate(req, schema, history)
 
         if raw_sql is None:
-            code = "NEEDS_REFINEMENT" if suggestion else "SQL_REJECTED"
-            msg = suggestion or (
-                f"Не удалось получить логичный SQL (score < {self.settings.sql_judge_threshold}). "
-                "Данные не придумываются."
-            )
-            return self._error(
-                code, msg, query_id, start, sql="", meta=self._judge_meta(judge_info),
-            )
+            msg = suggestion or "Уточните, пожалуйста, условия запроса — и я пересоберу его."
+            return self._error("NEEDS_REFINEMENT", msg, query_id, start, sql="",
+                               meta=self._judge_meta(judge_info))
 
         try:
             # Шаг 2: жёсткая безопасность (AST) — только SELECT/whitelist/ПДн.
@@ -97,9 +192,9 @@ class Orchestrator:
         columns = list(page_rows[0].keys()) if page_rows else []
         data = [dict(r) for r in page_rows]
 
-        return ChatResponse(
+        resp = ChatResponse(
             status="success",
-            text=await self.llm.summarize(req.question, safe_sql, columns, data, req.role.value, total),
+            text=self._template_summarize(req.question, columns, data, total),
             sql=safe_sql,
             result=ResultBlock(
                 columns=columns,
@@ -121,6 +216,24 @@ class Orchestrator:
                 "judge": self._judge_meta(judge_info),
             },
         )
+        if not history:
+            await self._cache_put(req.role.value, req.question, resp)
+        return resp
+
+    @staticmethod
+    def _template_summarize(question: str, columns: list[str], rows: list[dict], total: int) -> str:
+        """Быстрый шаблонный ответ (без вызова LLM — ради скорости)."""
+        if not rows:
+            return f"По запросу «{question}» ничего не найдено."
+        parts = []
+        for r in rows[:3]:
+            if len(columns) >= 2:
+                parts.append(f"{r.get(columns[0], '')} — {r.get(columns[1], '')}")
+            elif columns:
+                parts.append(str(r.get(columns[0], "")))
+        head = "; ".join(parts)
+        return (f"Результат по запросу «{question}»: всего {total} записей. "
+                f"{head}" + ("…" if total > 3 else "."))
 
     def _suggest_filters(self, meta: dict, total: int = 0, page_size: int = 50) -> list[dict[str, str]] | None:
         """Уточняющие фильтры для «широкого»/неуточнённого запроса (Big Data бонус)."""
@@ -154,26 +267,25 @@ class Orchestrator:
         rows = await self.db.fetch_readonly(count_sql)
         return int(rows[0]["__total"])
 
-    async def _generate_acceptable_sql(self, req: ChatRequest, schema: str) -> tuple[str | None, dict, str]:
-        """Петля: генерация + судейство + 1 самоисправление, затем сужение запроса.
-
-        Пытаемся получить телефонно-приемлемый SQL (score >= порог). Если после
-        max_sql_attempts (генерация + 1 самоисправление) не удалось — просим LLM
-        предложить пользователю КАНДИДАТОВ запроса либо сузить условия.
-        Возвращает (sql, judge_info, suggestion).
+    async def _generate_sql_candidate(self, req: ChatRequest, schema: str,
+                                      history: list[dict] | None = None,
+                                      ) -> tuple[str | None, dict, str]:
+        """1-2 вызова LLM: генерация + САМОСУДЬЯ (один вызов). При неуверенности —
+        одна попытка исправления с фидбеком; потом сужение. Возвращает (sql, judge_info, suggestion).
         """
         feedback = ""
-        last_check: dict = {}
+        last_meta: dict = {}
         for _ in range(self.settings.max_sql_attempts):
-            sql, _ = await self.llm.generate_sql(req.question, schema, req.role.value, feedback)
-            check = await self.llm.check_sql(sql, req.question, schema, req.role.value)
-            last_check = check
-            if check["is_valid"] and check["score"] >= self.settings.sql_judge_threshold:
-                return sql, last_check, ""
-            feedback = f"Предыдущий SQL нелогичен ({check['score']}): {check['reason']}. Исправь."
-        # Все попытки исчерпаны -> интерактивное сужение (кандидаты / подсказка)
+            sql, meta = await self.llm.generate_and_judge(req.question, schema, req.role.value,
+                                                          feedback, history)
+            last_meta = meta
+            ok = (not meta.get("unknown") and meta.get("is_valid")
+                  and meta.get("score", 0.0) >= self.settings.sql_judge_threshold)
+            if ok:
+                return sql, meta, ""
+            feedback = f"Предыдущий SQL нелогичен ({meta.get('score')}): {meta.get('reason')}. Исправь."
         suggestion = await self.llm.suggest_narrowing(req.question, schema, req.role.value, feedback)
-        return None, last_check, suggestion
+        return None, last_meta, suggestion
 
     def _judge_meta(self, info: dict) -> dict:
         return {
@@ -194,10 +306,14 @@ class Orchestrator:
             constraints=ast.get("constraints", []),
         )
 
+    _REFUSAL_CODES = {"PDN_VIOLATION", "READ_ONLY", "NOT_SELECT", "TABLE_FORBIDDEN", "NEEDS_REFINEMENT"}
+
     def _error(self, code, message, query_id, start, req=None, sql="", meta=None) -> ChatResponse:
+        # Для отказов (запрещённое действие/ПДн) — чистый текст отказа, без «не удалось ответить».
+        text = message if code in self._REFUSAL_CODES else f"Не удалось ответить: {message}. Данные не придумываются."
         return ChatResponse(
             status="error",
-            text=f"Не удалось ответить: {message}. Данные не придумываются.",
+            text=text,
             sql=sql,
             error=ErrorBlock(code=code, message=message),
             meta={

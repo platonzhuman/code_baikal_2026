@@ -26,9 +26,11 @@ class LLMFormatError(Exception):
 # ---------- Валидируемые ответы LLM (pydantic) ----------
 
 class GenerationOutput(BaseModel):
-    """Ответ генератора SQL: { "sql": "...", "explanation": {...} }."""
+    """Ответ генератора SQL: { "sql": "...", "explanation": {...}, "score": 0..1, "reason": "..." }."""
     sql: str = Field(..., min_length=1)
     explanation: dict = {}
+    score: float = Field(default=0.9, ge=0.0, le=1.0)
+    reason: str = ""
 
 
 class JudgeOutput(BaseModel):
@@ -98,6 +100,7 @@ class LLMClient:
         self._model = (s.llm_model or s.yandex_cloud_model).strip()
         self._base_url = (s.llm_base_url or "").strip().rstrip("/")
         self._timeout = s.llm_timeout
+        self._connect_timeout = s.llm_connect_timeout
         self._retries = s.llm_max_retries
         # Авто-определение Yandex: по хосту или по ключу (AQVN...)
         self._is_yandex = (
@@ -153,7 +156,9 @@ class LLMClient:
         last_err: Exception | None = None
         for attempt in range(self._retries + 1):
             try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(self._timeout, connect=self._connect_timeout)
+                ) as client:
                     resp = await client.post(url, json=payload, headers=headers)
                 # Некоторые шлюзы не поддерживают json_object -> повторим без него
                 if resp.status_code in (400, 422) and json_mode:
@@ -177,32 +182,64 @@ class LLMClient:
 
     # ---------------- LLM №1: генерация SQL ----------------
 
-    async def generate_sql(self, question: str, schema: str, role: str, feedback: str = "") -> tuple[str, dict]:
-        """LLM №1: вопрос -> SQL. Возвращает (sql, meta).
-
-        Анти-галлюцинация: если модель вернула не-SELECT, нераспознаваемый SQL или
-        таблицы вне whitelist — возвращаем "UNKNOWN" (отказ, данные не выдумываем).
-        """
+    async def generate_sql(self, question: str, schema: str, role: str,
+                           feedback: str = "", history: list[dict] | None = None) -> tuple[str, dict]:
+        """LLM №1: вопрос -> SQL (с учётом истории разговора). Возвращает (sql, meta)."""
         if self.real_enabled:
             try:
                 system = build_system_prompt(role)
-                user = self._build_gen_user(question, schema, role, feedback)
+                user = self._build_gen_user(question, schema, role, feedback, history)
                 content = await self._call_llm(system, user)
                 out = GenerationOutput.model_validate_json(self._extract_json(content))
                 sql = self._sanitize_sql(out.sql)
+                meta = {"model": self._model, "score": out.score, "reason": out.reason,
+                        "feedback": feedback}
                 if self._is_unknown(sql):
-                    return sql, {"model": self._model, "unknown": True, "feedback": feedback}
-                return sql, {"model": self._model, "feedback": feedback}
+                    meta["unknown"] = True
+                return sql, meta
             except (LLMUnavailable, LLMFormatError, ValidationError, json.JSONDecodeError) as e:
                 # Сбой реальной модели -> безопасный откат на mock, система жива.
                 sql = self._mock_generate(question, role)
-                return sql, {"model": "mock-generator", "fallback": str(e)[:200], "feedback": feedback}
+                check = self._mock_check(sql)
+                return sql, {"model": "mock-generator", "fallback": str(e)[:200],
+                             "score": check["score"], "reason": check["reason"], "feedback": feedback}
 
         sql = self._mock_generate(question, role)
-        return sql, {"model": "mock-generator", "feedback": feedback}
+        check = self._mock_check(sql)
+        return sql, {"model": "mock-generator", "score": check["score"],
+                     "reason": check["reason"], "feedback": feedback}
 
-    def _build_gen_user(self, question: str, schema: str, role: str, feedback: str) -> str:
-        parts = [f"Вопрос: {question}"]
+    async def generate_and_judge(self, question: str, schema: str, role: str,
+                                 feedback: str = "",
+                                 history: list[dict] | None = None) -> tuple[str, dict]:
+        """ОДИН вызов LLM: генерация + самосудья (score/reason). Возвращает (sql, meta)."""
+        sql, meta = await self.generate_sql(question, schema, role, feedback, history)
+        meta["is_valid"] = bool(meta.get("score", 0.0) >= self.threshold) and not self._is_unknown(sql)
+        return sql, meta
+
+    @staticmethod
+    def _format_history(history: list[dict] | None) -> str:
+        """Краткая история разговора для контекста (последние 4 хода)."""
+        if not history:
+            return ""
+        lines = []
+        for item in history[-4:]:
+            q = (item.get("question") or "").strip()
+            a = (item.get("answer") or "").strip()
+            if q:
+                lines.append(f"- Пользователь: {q[:120]}")
+            if a:
+                lines.append(f"- Ассистент: {a[:120]}")
+        return "\n".join(lines)
+
+    def _build_gen_user(self, question: str, schema: str, role: str, feedback: str,
+                        history: list[dict] | None = None) -> str:
+        parts = []
+        hist = self._format_history(history)
+        if hist:
+            parts.append("ИСТОРИЯ РАЗГОВОРА (учитывай её для понимания уточнений типа «на бюджете», "
+                         "«в этом году»):\n" + hist)
+        parts.append(f"Вопрос: {question}")
         if feedback:
             parts.append(f"Замечание от судьи: {feedback}. Исправь SQL с учётом замечания.")
         parts.append("Схема БД (только из этих таблиц/столбцов):\n" + schema)
@@ -288,28 +325,35 @@ class LLMClient:
     # ---------------- сужение запроса ----------------
 
     async def suggest_narrowing(self, question: str, schema: str, role: str, feedback: str = "") -> str:
-        """Подсказка пользователю, как сузить слишком общий/противоречивый запрос."""
+        """Подсказка пользователю, как сузить слишком общий/противоречивый запрос.
+
+        Возвращает человекочитаемое сообщение: короткая просьба уточнить + варианты
+        по порядку (каждый в отдельной строке), БЕЗ технических деталей из судьи.
+        """
         if self.real_enabled:
             try:
                 system = NARROWING_SYSTEM
                 user = f"Вопрос: {question}\nЗамечание: {feedback}\nСхема:\n{schema}"
                 content = await self._call_llm(system, user)
                 out = NarrowingOutput.model_validate_json(self._extract_json(content))
-                msg = out.message.strip()
-                if out.candidates:
-                    msg += " Варианты: " + "; ".join(out.candidates)
-                return msg or self._fallback_narrowing(feedback)
+                return self._format_narrowing(out.message, out.candidates)
             except (LLMUnavailable, LLMFormatError, ValidationError, json.JSONDecodeError):
-                return self._fallback_narrowing(feedback)
-        return self._fallback_narrowing(feedback)
+                return self._fallback_narrowing()
+        return self._fallback_narrowing()
 
     @staticmethod
-    def _fallback_narrowing(feedback: str) -> str:
-        return (
-            "Запрос получился слишком общим или противоречивым. Уточни, пожалуйста, "
-            "критерии: факультет, год, категорию или статус — и я пересоберу запрос. "
-            f"Подсказка от проверки: {feedback}"
-        )
+    def _format_narrowing(message: str, candidates: list[str]) -> str:
+        msg = (message or "Уточните, пожалуйста, условия запроса.").strip()
+        if candidates:
+            lines = "\n".join(f"{i + 1}) {c.strip()}" for i, c in enumerate(candidates) if c.strip())
+            msg = f"{msg}\n\nМогу уточнить:\n{lines}"
+        return msg
+
+    @staticmethod
+    def _fallback_narrowing() -> str:
+        # Без технических деталей (фидбек судьи пользователю не показываем).
+        return ("Не хватает данных, чтобы построить запрос. Уточните, пожалуйста: "
+                "факультет, год, категорию или статус — и я пересоберу запрос.")
 
     # ---------------- суммаризатор ----------------
 
