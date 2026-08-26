@@ -101,15 +101,15 @@ class SQLValidator:
                 f"Запрещённые таблицы: {', '.join(sorted(unknown))}"
             )
 
-        # 2.1) SELECT * на таблицах с ПДн/обучающимися — запрещён (утечка через звёздочку)
+        # 2.1) SELECT * на таблицах с ПДн/обучающимися — запрещён (утечка через звёздочку).
+        #      Звёзда внутри агрегата (COUNT(*)) — это не выборка, разрешаем.
         pdn_tables = {"students", "applicants", "enrollments", "staff", "v_students", "v_applicants", "v_staff"}
         for star in ast.find_all(exp.Star):
+            if star.find_ancestor(exp.AggFunc):
+                continue
             parent_table = ""
-            if star is not None and star.parent is not None:
-                # exp.Star лежит под exp.Column для «t.*»
-                col = star.parent
-                if isinstance(col, exp.Column):
-                    parent_table = col.table.lower()
+            if star.parent is not None and isinstance(star.parent, exp.Column):
+                parent_table = star.parent.table.lower()
             if not parent_table:
                 parent_table = next(iter(tables), "") if len(tables) == 1 else ""
             if (not parent_table and tables & pdn_tables) or parent_table in pdn_tables:
@@ -142,45 +142,63 @@ class SQLValidator:
         return ast.sql(dialect="postgres"), {"truncated": truncated, "tables": sorted(tables)}
 
     def _check_learner_projection(self, ast: exp.Expression) -> None:
-        """Запрет вывода полей обучающихся (в т.ч. id) вне агрегатов/GROUP BY (ПДн)."""
+        """Запрет ВЫВОДА полей обучающихся (в т.ч. id) вне агрегатов/GROUP BY (ПДн).
+
+        Смотрим только проекции каждого SELECT (не WHERE и не подзапросы) —
+        чтобы не блокировать корректные запросы с фильтрами по студентам.
+        """
         learner = {"students", "applicants", "enrollments"}
         alias_map: dict[str, str] = {}
         for t in ast.find_all(exp.Table):
             alias_map[t.alias_or_name.lower()] = t.name.lower()
 
-        group_cols: set[str] = set()
-        group = ast.args.get("group") if isinstance(ast, exp.Select) else None
-        if group is not None:
-            for gexpr in group.expressions:
-                cols = [gexpr] if isinstance(gexpr, exp.Column) else list(gexpr.find_all(exp.Column))
-                group_cols.update(c.name.lower() for c in cols)
-
-        projections = ast.args.get("expressions", []) if isinstance(ast, exp.Select) else []
-        from_learner = {a for a in alias_map.values() if a in learner}
-        for expr in projections:
-            for col in expr.find_all(exp.Column):
-                real = alias_map.get(col.table.lower(), "") if col.table else ""
-                if real not in learner:
-                    # незаквалифицированная колонка + единственная таблица-обучающийся в FROM
-                    if not col.table and len(from_learner) == 1:
-                        real = next(iter(from_learner))
-                    else:
+        def projection_columns(expr):
+            """Колонки выражения БЕЗ спуска в вложенные SELECT."""
+            out = []
+            stack = [expr]
+            while stack:
+                node = stack.pop()
+                if isinstance(node, exp.Column):
+                    out.append(node)
+                    continue
+                for child in node.iter_expressions():
+                    if isinstance(child, exp.Select):
                         continue
-                if col.find_ancestor(exp.AggFunc):
-                    continue
-                # индивидуальные идентификаторы (id, student_id) НЕЛЬЗЯ выводить вне агрегата;
-                # размерностные FK (program_id, faculty_id, course_id, group_id) — допустимы
-                name = col.name.lower()
-                if name in {"id", "student_id", "applicant_id"}:
+                    stack.append(child)
+            return out
+
+        for sel in ast.find_all(exp.Select):
+            group_cols: set[str] = set()
+            group = sel.args.get("group")
+            if group is not None:
+                for gexpr in group.expressions:
+                    cols = [gexpr] if isinstance(gexpr, exp.Column) else list(gexpr.find_all(exp.Column))
+                    group_cols.update(c.name.lower() for c in cols)
+            for expr in sel.args.get("expressions", []):
+                for col in projection_columns(expr):
+                    real = alias_map.get(col.table.lower(), "") if col.table else ""
+                    if real not in learner:
+                        if not col.table:
+                            from_learner = {a for a in alias_map.values() if a in learner}
+                            if len(from_learner) == 1:
+                                real = next(iter(from_learner))
+                            else:
+                                continue
+                        else:
+                            continue
+                    if col.find_ancestor(exp.AggFunc):
+                        continue
+                    name = col.name.lower()
+                    if name in {"id", "student_id", "applicant_id"}:
+                        raise PDNViolationError(
+                            "Идентификаторы обучающихся не выводятся — только агрегаты (COUNT/AVG)."
+                        )
+                    if name in group_cols:
+                        continue
                     raise PDNViolationError(
-                        "Идентификаторы обучающихся не выводятся — только агрегаты (COUNT/AVG)."
+                        "Поля данных обучающихся (students/applicants/enrollments) могут выводиться "
+                        "только в агрегатах (COUNT/AVG) — персональная идентификация недоступна."
                     )
-                if name in group_cols:
-                    continue
-                raise PDNViolationError(
-                    "Поля данных обучающихся (students/applicants/enrollments) могут выводиться "
-                    "только в агрегатах (COUNT/AVG) — персональная идентификация недоступна."
-                )
 
     @staticmethod
     def explain(ast_meta: dict) -> dict:

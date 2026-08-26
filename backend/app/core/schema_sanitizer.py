@@ -296,7 +296,7 @@ FEW_SHOT: dict[str, list[tuple[str, str]]] = {
          "JOIN courses c ON e.course_id = c.id JOIN staff st ON c.teacher_id = st.id "
          "WHERE e.semester = '2026 spring' GROUP BY st.id ORDER BY students DESC LIMIT 3"),
         ("Найди преподавателей, которые не ведут ни одной дисциплины в текущем семестре",
-         "SELECT st.id FROM staff st WHERE st.post = 'преподаватель' AND NOT EXISTS "
+         "SELECT st.fio FROM staff st WHERE st.post = 'преподаватель' AND NOT EXISTS "
          "(SELECT 1 FROM courses c WHERE c.teacher_id = st.id AND c.semester = 1)"),
         ("У какого студента из группы БИВ-211 больше всего академических задолженностей?",
          "SELECT COUNT(CASE WHEN e.passed = false THEN 1 END) AS debts FROM students s "
@@ -368,6 +368,8 @@ VALUE_MAP = (
     "· «оставшиеся на 2-й год» → students.course=2 AND status='active';\n"
     "· ⛔ ИДЕНТИФИКАТОРЫ НЕЛЬЗЯ: вопросы «кто/у кого/список студентов» → отвечай КОЛИЧЕСТВОМ "
     "(COUNT) или агрегатом; НЕ выводи students.id / student_id / fio (запрещено).\n"
+    "· ✅ ПРЕПОДАВАТЕЛИ/ДЕКАНЫ/СОТРУДНИКИ: выводи их ФИО (staff.fio) — РАЗРЕШЕНО по политике; "
+    "НЕ выводи их id. Например: SELECT st.fio FROM staff st;\n"
     "· «2-я пара/понедельник» → schedule.pair=2, schedule.day_of_week='Пн'.\n"
     "· ЧЕГО НЕТ в данных (не выдумывай): общежитие, стипендии, оплата за обучение, ФИО студентов, "
     "расписание преподавателей по дням, часы сверх teaching_load."

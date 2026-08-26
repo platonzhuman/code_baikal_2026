@@ -39,6 +39,7 @@ _PII_QUESTION_HINTS = (
     "фио студент", "фио абитуриент", "фио всех", "зачётк", "студенч", "паспортн",
     "имена", "именами", "именем", "имя ", "имена студентов", "их имен",
     "лучших студент", "список студент", "топ-5 студент", "топ-10 студент",
+    "контакт",
 )
 
 # Намерение «про студентов» (для сторожа «не считай студентов через staff»)
@@ -55,6 +56,12 @@ def _sql_is_fishy(question: str, sql: str) -> bool:
     uses_staff = (" staff" in su) or ("from staff" in su) or ("join staff" in su)
     uses_students = ("students" in su) or ("enrollments" in su)
     return uses_staff and not uses_students
+
+
+def _sql_has_star(sql: str) -> bool:
+    """SELECT * / t.* — нельзя (утечка ПДн); ловим до валидатора для автоперегенерации."""
+    su = (sql or "").lower()
+    return ("select *" in su) or (" .*" in su) or (".* " in su) or su.strip().startswith("select *")
 
 
 def _is_destructive(question: str) -> bool:
@@ -363,10 +370,14 @@ class Orchestrator:
             last_meta = meta
             ok = (not meta.get("unknown") and meta.get("is_valid")
                   and meta.get("score", 0.0) >= self.settings.sql_judge_threshold
-                  and not _sql_is_fishy(req.question, sql))
+                  and not _sql_is_fishy(req.question, sql)
+                  and not _sql_has_star(sql))
             if ok:
                 return sql, meta, ""
-            if _sql_is_fishy(req.question, sql):
+            if _sql_has_star(sql):
+                feedback = ("Ошибка: использование SELECT * (звёздочки) ЗАПРЕЩЕНО — "
+                            "перечисли нужные столбцы явно, без *.")
+            elif _sql_is_fishy(req.question, sql):
                 feedback = ("Ошибка: подсчёт СТУДЕНТОВ (должники/задолженность/сдал/учится) "
                             "иди через students/enrollments (enrollments.passed=false), "
                             "НЕ через staff/departments.")
