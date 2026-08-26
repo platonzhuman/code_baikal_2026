@@ -13,6 +13,7 @@ export default defineConfig({
       '/login': 'http://localhost:8000',
       '/schema': 'http://localhost:8000',
       '/history': 'http://localhost:8000',
+      '/analytics': 'http://localhost:8000',
     },
   },
 })
