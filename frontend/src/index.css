@@ -387,6 +387,14 @@ main {
   margin: 12vh 24px 24px;
 }
 
+.site-foot.glass {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .foot-brand {
   padding-right: 4px;
   font-family: Syne, sans-serif;
@@ -749,21 +757,179 @@ pre {
 .login {
   width: min(400px, calc(100% - 40px));
   margin: auto;
-  padding: 28px;
-  border-radius: 16px;
+  padding: 22px 22px 20px;
+  border-radius: 18px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+}
+
+.login .kicker {
+  margin: 0;
+  color: #b9d4ff;
+  font-size: 0.7rem;
+}
+
+.login h1 {
+  margin: 0;
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+.login > p:not(.kicker):not(.login-hint):not(.warn) {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.login-roles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 2px 0 2px;
+}
+
+.login-roles .chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 4px;
+  font-size: 0.78rem;
+  letter-spacing: -0.02em;
+  text-align: center;
+  line-height: 1.2;
+  white-space: normal;
+}
+
+.login-roles .chip.on {
+  color: var(--text);
+  background: rgba(24, 86, 255, 0.28);
+  border-color: rgba(24, 86, 255, 0.45);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.login label {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .login input {
-  padding: 12px 14px;
-  border-radius: 8px;
+  display: block;
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 12px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.06);
   color: var(--text);
   caret-color: var(--text);
 }
+
+.login-hint {
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.login .warn { margin: 0; }
+
+.login .primary {
+  margin-top: 2px;
+  width: 100%;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(7, 12, 25, 0.58);
+}
+
+body.modal-open { overflow: hidden; }
+
+html:has(body.modal-open),
+html:has(body.modal-open) body,
+html:has(body.modal-open) #root {
+  overflow: hidden;
+  height: 100%;
+}
+
+.modal {
+  position: relative;
+  width: min(520px, 100%);
+  max-height: min(88dvh, 720px);
+  overflow: auto;
+  padding: 24px 24px 22px;
+  border-radius: 18px;
+}
+
+.modal h2 {
+  margin: 0 0 10px;
+  font-family: Syne, 'Plus Jakarta Sans', sans-serif;
+  font-size: clamp(1.35rem, 2.4vw, 1.7rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.modal > p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.modal-close:hover { background: rgba(255, 255, 255, 0.12); }
+
+.snippet {
+  margin: 0 0 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.32);
+  overflow: auto;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
+
+.snippet code { font: inherit; }
+
+.snippet-copy {
+  margin: 0 0 14px;
+  padding: 8px 14px;
+}
+
+.snippet-iframe { margin-bottom: 0; }
 
 .sheet {
   width: min(880px, calc(100% - 40px));
@@ -780,7 +946,6 @@ pre {
   40% { opacity: 1; }
 }
 
-.login h1 { font-size: clamp(1.6rem, 3vw, 2.2rem); }
 .empty h1 { font-size: clamp(1.6rem, 4vw, 2.6rem); }
 
 @media (max-width: 1100px) {
@@ -801,7 +966,7 @@ pre {
   .logo { width: 34px; height: 34px; font-size: 13px; }
   .badge { display: none; }
   nav button { padding: 8px 10px; }
-  .hud-auth.glass {
+  header .hud-auth.glass {
     height: 46px;
     padding: 0;
     background: transparent;
@@ -810,8 +975,10 @@ pre {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
-  .hud-auth .ghost {
+  header .hud-auth .ghost {
     height: 46px;
+    padding: 0 12px;
+    font-size: 13px;
   }
   .welcome {
     display: flex;
@@ -842,13 +1009,65 @@ pre {
   .offer-card:nth-child(3) { margin-left: 0; }
   .principle-list { padding: 4px 18px; }
   .principle-list li { grid-template-columns: 2.4rem 1fr; padding: 18px 0; }
-  .site-foot {
+  .site-foot.glass {
     flex-direction: column;
     align-items: stretch;
-    margin: 8vh 10px 16px;
+    gap: 14px;
+    margin: 8vh 16px 20px;
+    padding: 16px 14px 14px;
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.07);
+    backdrop-filter: blur(22px) saturate(160%);
+    -webkit-backdrop-filter: blur(22px) saturate(160%);
+    border: 1px solid var(--line);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.2);
   }
-  .site-foot .hud { height: 46px; }
-  .foot-brand { letter-spacing: 0.08em; }
+  .site-foot .hud,
+  .site-foot .hud-auth.glass {
+    height: auto;
+    min-height: 44px;
+    width: 100%;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .site-foot .hud:first-child { gap: 8px; }
+  .site-foot .logo { width: 36px; height: 36px; }
+  .foot-brand {
+    font-size: 14px;
+    letter-spacing: 0.1em;
+  }
+  .foot-meta {
+    margin-left: auto;
+    padding: 0 2px 0 0;
+    font-size: 0.7rem;
+  }
+  .site-foot .hud-auth {
+    display: flex;
+    gap: 8px;
+  }
+  .site-foot .hud-auth .ghost {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 44px;
+    justify-content: center;
+    padding: 0 6px;
+    font-size: 12.5px;
+    text-align: center;
+    white-space: nowrap;
+  }
+  .login {
+    width: calc(100% - 24px);
+    margin: 12px auto;
+    padding: 18px 16px 16px;
+    gap: 8px;
+  }
+  .login-roles .chip { font-size: 0.74rem; padding: 8px 4px; }
+  .modal { padding: 20px 16px 16px; }
   .chat-layout { padding: 8px 8px 0; }
   .threads {
     position: fixed;

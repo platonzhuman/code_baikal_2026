@@ -37,7 +37,7 @@ function desktopSmooth() {
   return window.matchMedia('(hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)').matches
 }
 
-export default function Welcome({ onChat, loggedIn, onLogin, onLogout }) {
+export default function Welcome({ onChat, loggedIn, onLogin, onLogout, onIntegrate }) {
   const rootRef = useRef(null)
   const toTop = useRef(() => window.scrollTo(0, 0))
 
@@ -92,7 +92,7 @@ export default function Welcome({ onChat, loggedIn, onLogin, onLogout }) {
     toTop.current = () => go(0)
 
     const onWheel = (e) => {
-      if (!desktopSmooth() || e.ctrlKey) return
+      if (document.body.classList.contains('modal-open') || !desktopSmooth() || e.ctrlKey) return
       e.preventDefault()
       let dy = e.deltaY
       if (e.deltaMode === 1) dy *= 16
@@ -162,7 +162,7 @@ export default function Welcome({ onChat, loggedIn, onLogin, onLogout }) {
         </ol>
       </section>
 
-      <footer className="site-foot">
+      <footer className="site-foot glass">
         <div className="hud glass">
           <button type="button" className="logo" onClick={() => toTop.current()}>
             G
@@ -177,6 +177,7 @@ export default function Welcome({ onChat, loggedIn, onLogin, onLogout }) {
           ) : (
             <button type="button" className="ghost" onClick={onLogin}>Войти</button>
           )}
+          <button type="button" className="ghost" onClick={onIntegrate}>Интеграция</button>
         </div>
       </footer>
     </div>
