@@ -72,9 +72,20 @@ async def test_check_rejects_forbidden_table(client):
 
 @pytest.mark.asyncio
 async def test_check_rejects_pdn_column(client):
-    r = await client.check_sql("SELECT fio FROM students", "вопрос", "", "staff")
+    # поля-запрещёнки (контакты/паспорт) блокируются и в судье
+    r = await client.check_sql("SELECT student_card_no FROM students", "вопрос", "", "staff")
     assert r["is_valid"] is False
     assert r["score"] < client.threshold
+
+
+def test_validator_blocks_student_fio():
+    # студенческое ФИО вне агрегата блокирует ВАЛИДАТОР («только агрегаты»)
+    from app.core.security import PDNViolationError, build_validator
+    try:
+        build_validator().validate("SELECT fio FROM students")
+        assert False, "должно быть заблокировано"
+    except PDNViolationError:
+        pass
 
 
 @pytest.mark.asyncio

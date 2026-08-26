@@ -127,7 +127,7 @@ async def chat(req: ChatRequest, request: Request):
     emit("INFO", "main", "chat_completed", trace_id=trace_id, query_id=response.meta.query_id,
          session_id=req.session_id, role=req.role.value,
          data={"status": response.status, "total_latency_ms": response.meta.latency_ms,
-               "sql_preview": (response.sql or "")[:200],
+               "sql": (response.sql or "")[:4000],
                "row_count": response.result.row_count if response.result else 0})
     log_query(
         session_id=req.session_id, query_id=response.meta.query_id, role=req.role.value,

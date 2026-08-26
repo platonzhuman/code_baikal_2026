@@ -19,6 +19,8 @@ from app.services.llm_client import LLMClient
 _DESTRUCTIVE_VERBS = (
     "удалит", "удали", "снести", "снеси", "изменит", "измени", "обнови", "встав",
     "создай", "очисти", "стерет", "убить", "удалить",
+    "добав", "внеси", "внести", "поменяй", "смени", "поправь", "переимен",
+    "подставь", "переменную",
     "drop", "delete", "update", "insert", "alter", "truncate", "replace",
 )
 _REFUSAL_PII_HINTS_UNUSED = (
@@ -33,7 +35,7 @@ _REFUSAL_DML_HINTS = (
 
 # Явные просьбы про персональные данные — отказ сразу (но НЕ трогаем «фио преподавателей»).
 _PII_QUESTION_HINTS = (
-    "паспорт", "телефон", "почт", "email", "личн", "персональн",
+    "паспорт", "телефон", "почт", "email", "личные данн", "персональн",
     "фио студент", "фио абитуриент", "фио всех", "зачётк", "студенч", "паспортн",
 )
 
@@ -322,8 +324,20 @@ class Orchestrator:
 
     @staticmethod
     def _page_sql(sql: str, page: int, page_size: int) -> str:
+        """Страница из БД. Если в SQL уже есть LIMIT (топ-N из модели) и он ≤ page_size —
+        сохраняем его (иначе пагинация перезаписывает и топ-1/топ-3 теряются)."""
+        import sqlglot
+        parsed = sqlglot.parse_one(sql, read="postgres")
+        limit = parsed.args.get("limit")
+        model_limit = None
+        if limit is not None:
+            expr = limit.expression
+            if expr is not None and expr.is_number:
+                model_limit = int(expr.this)
         base = Orchestrator._remove_limit_and_order(sql)
         offset = (page - 1) * page_size
+        if model_limit is not None and model_limit <= page_size and model_limit > 0:
+            return f"{base} LIMIT {model_limit} OFFSET {offset}"
         return f"{base} LIMIT {page_size} OFFSET {offset}"
 
     async def _count_rows(self, sql: str) -> int:

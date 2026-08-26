@@ -272,7 +272,7 @@ async def seed(conn: asyncpg.Connection) -> None:
     # ---- 10) Нагрузка преподавателей (часы) ----
     course_teacher = dict(await conn.fetch("SELECT id, teacher_id FROM courses"))
     load_rows = [
-        (tid, cid, 60 + (cid % 4) * 30, "2025 spring")
+        (tid, cid, 150 + (cid % 6) * 50, "2025 spring")
         for cid, tid in course_teacher.items()
         if tid is not None
     ]

@@ -45,11 +45,30 @@ def test_sql_injection_composite():
 
 
 def test_auto_limit_on_wide_query():
-    sql, meta = validator.validate("SELECT program_id, gpa FROM students")
+    sql, meta = validator.validate("SELECT name, code FROM programs")
     assert meta["truncated"] is True
     assert "LIMIT" in sql.upper()
 
 
 def test_no_auto_limit_on_aggregate():
-    sql, meta = validator.validate("SELECT program_id, COUNT(*) FROM students GROUP BY program_id")
+    sql, meta = validator.validate(
+        "SELECT p.name, COUNT(s.id) FROM students s "
+        "JOIN programs p ON s.program_id = p.id GROUP BY p.name")
+    assert meta["truncated"] is False
+
+
+def test_blocks_raw_student_columns():
+    # «сырые» поля студентов (вне агрегатов) — запрещены
+    import pytest
+    from app.core.security import PDNViolationError
+    for bad in ("SELECT gpa FROM students", "SELECT fio FROM students",
+                "SELECT e.student_id FROM enrollments e"):
+        with pytest.raises(PDNViolationError):
+            validator.validate(bad)
+
+
+def test_allows_dimensional_group():
+    # агрегат по направлениям (FK-размерность) — допустим
+    sql, meta = validator.validate(
+        "SELECT s.program_id, COUNT(s.id) FROM students s GROUP BY s.program_id")
     assert meta["truncated"] is False

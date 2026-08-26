@@ -47,9 +47,11 @@ class Database:
                 await conn.execute("SET LOCAL default_transaction_read_only = ON")
                 await conn.execute("SET LOCAL transaction_read_only = ON")
                 rows = await conn.fetch(query, *(params or []))
-        emit("DEBUG", "db", "db_query", data={"sql_preview": query[:200],
-                                              "row_count": len(rows),
-                                              "execution_time_ms": round((time.perf_counter() - t0) * 1000, 2)})
+        ql = query.lstrip().lower()
+        if not ql.startswith(("information_schema", "pg_", "select 1 ")):
+            emit("DEBUG", "db", "db_query", data={"sql_preview": query[:300],
+                                                  "row_count": len(rows),
+                                                  "execution_time_ms": round((time.perf_counter() - t0) * 1000, 2)})
         return rows
 
     async def healthcheck(self) -> bool:

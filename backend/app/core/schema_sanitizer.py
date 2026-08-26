@@ -275,6 +275,17 @@ FEW_SHOT: dict[str, list[tuple[str, str]]] = {
          "JOIN students s ON e.student_id = s.id JOIN programs p ON s.program_id = p.id "
          "JOIN departments d ON p.department_id = d.id "
          "WHERE e.passed = false AND lower(d.name) LIKE '%программн%инженер%' GROUP BY d.name"),
+        ("Выведи топ-3 преподавателей с наибольшим количеством студентов во 2-м семестре",
+         "SELECT st.id, COUNT(DISTINCT e.student_id) AS students FROM enrollments e "
+         "JOIN courses c ON e.course_id = c.id JOIN staff st ON c.teacher_id = st.id "
+         "WHERE e.semester = '2026 spring' GROUP BY st.id ORDER BY students DESC LIMIT 3"),
+        ("Найди преподавателей, которые не ведут ни одной дисциплины в текущем семестре",
+         "SELECT st.id FROM staff st WHERE st.post = 'преподаватель' AND NOT EXISTS "
+         "(SELECT 1 FROM courses c WHERE c.teacher_id = st.id AND c.semester = 1)"),
+        ("У какого студента из группы БИВ-211 больше всего академических задолженностей?",
+         "SELECT COUNT(CASE WHEN e.passed = false THEN 1 END) AS debts FROM students s "
+         "JOIN groups g ON s.group_id = g.id LEFT JOIN enrollments e ON e.student_id = s.id "
+         "WHERE g.name = 'БИВ-211'"),
     ],
 }
 
@@ -297,12 +308,16 @@ VALUE_MAP = (
     "(или programs.department_id).\n"
     "LIKE по названиям — по КОРНЯМ (иной падеж!): «программная инженерия» → LIKE '%программн%инженер%'.\n"
     "ПО УМОЛЧАНИЮ (если в вопросе не указано):\n"
-    "· год → 2026 (максимальный год в данных); семестр без года → '2026 spring';\n"
+    "· год → 2026 (НЕ переспрашивай — просто бери 2026);\n"
+    "· «текущий семестр»/«первый/осенний» → 1 (или '... fall'); «второй/весенний» → 2 (или '... spring');\n"
     "· «обучается/учится» → status='active' БЕЗ фильтра по году;\n"
     "· «бюджет/платно/места» без уточнения → считай ОБА;\n"
     "· «форма обучения» без указания → не фильтруй;\n"
-    "· «должники/задолженность» без семестра → за ВСЕ семестры (без фильтра семестра);\n"
+    "· «должники/задолженность» без семестра → за ВСЕ семестры;\n"
     "· «средний балл/проходной» без уточнения → по всем направлениям.\n"
+    "ТЕХНИЧЕСКОЕ:\n"
+    "· НЕ используй :плейсхолдеры или $1 в SQL — подставляй конкретные значения;\n"
+    "· «Базы данных» (название дисциплины) → LIKE '%баз%данн%' (падежи!).\n"
     "СИНОНИМЫ (переводи так):\n"
     "· ученик/учащийся/учат(ся)/зачислен → students; абитуриент/поступающий → applicants;\n"
     "· педагог/преподаватель/лектор → staff (post='преподаватель');\n"
@@ -316,10 +331,11 @@ VALUE_MAP = (
     "«за последние N лет» → год >= (максимальный год - N + 1);\n"
     "· «второй семестр» → '... spring'; «первый/осенний» → '... fall';\n"
     "· группа (ИВТ-101/БИВ-211) → groups.name; аудитория/кабинет → rooms; "
-    "корпус → rooms.building; расписание → schedule;\n"
-    "· нагрузка (часы) → teaching_load.hours; «сколько часов» → SUM(teaching_load.hours);\n"
+    "корпус → rooms.building; расписание → schedule;\n"    "· нагрузка (часы) → teaching_load.hours; «сколько часов» → SUM(teaching_load.hours);\n"
     "· «по математике/русскому» → applicants.ege_math / ege_rus;\n"
     "· «с первой попытки» → enrollments.attempt=1; «сколько сдал с 1-й попытки» → WHERE attempt=1 AND passed;\n"
+    "· ⛔ ИДЕНТИФИКАТОРЫ НЕЛЬЗЯ: вопросы «кто/у кого/список студентов» → отвечай КОЛИЧЕСТВОМ "
+    "(COUNT) или агрегатом; НЕ выводи students.id / student_id / fio (запрещено).\n"
     "· «2-я пара/понедельник» → schedule.pair=2, schedule.day_of_week='Пн'."
 )
 
