@@ -3,55 +3,249 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Сайт университета — демо виджета</title>
+    <title>ИГУ — учебный портал</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,500;0,7..72,700;1,7..72,500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <style>
-      :root { font-family: Georgia, "Times New Roman", serif; color: #1a2030; }
-      body { margin: 0; background: #f3f0e8; }
-      header { padding: 18px 28px; background: #14203a; color: #f4f7ff; }
-      header strong { letter-spacing: 0.08em; }
-      header span { opacity: 0.7; font-size: 14px; margin-left: 10px; }
-      main { display: grid; grid-template-columns: 1fr 420px; gap: 28px; max-width: 1100px; margin: 0 auto; padding: 28px; }
-      article { line-height: 1.55; }
-      h1 { font-size: 1.8rem; }
-      iframe { width: 100%; height: 640px; border: 0; border-radius: 16px; background: #070c19; box-shadow: 0 12px 40px rgba(20, 32, 58, 0.18); }
-      aside p { margin: 0 0 10px; font-size: 13px; color: #5a6478; }
-      code { display: block; padding: 12px; background: #fff; border-radius: 8px; font-size: 12px; overflow: auto; }
-      @media (max-width: 860px) {
-        main { grid-template-columns: 1fr; }
-        iframe { height: 520px; }
+      :root {
+        --ink: #121826;
+        --muted: #5c6578;
+        --navy: #0e1a32;
+        --navy-2: #173056;
+        --gold: #c4a15a;
+        --paper: #f6f1e6;
+        --card: #fffdf8;
+        --line: rgba(18, 24, 38, 0.1);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; }
+      body {
+        color: var(--ink);
+        background:
+          radial-gradient(1200px 420px at 0% -10%, rgba(196, 161, 90, 0.18), transparent 55%),
+          linear-gradient(180deg, #efe8d8 0%, var(--paper) 28%, #efeae0 100%);
+        font-family: Manrope, ui-sans-serif, system-ui, sans-serif;
+      }
+      .top {
+        background: var(--navy);
+        color: #f4f7ff;
+        border-bottom: 3px solid var(--gold);
+      }
+      .top-inner, .wrap, .foot-inner {
+        width: min(1180px, calc(100% - 40px));
+        margin: 0 auto;
+      }
+      .top-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        min-height: 72px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        letter-spacing: 0.04em;
+      }
+      .crest {
+        width: 36px;
+        height: 36px;
+        border: 1px solid var(--gold);
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: var(--gold);
+        font-family: Literata, Georgia, serif;
+        font-weight: 700;
+        font-size: 13px;
+      }
+      .brand strong { display: block; font-size: 15px; }
+      .brand small { display: block; opacity: 0.62; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+      nav { display: flex; gap: 6px; flex-wrap: wrap; }
+      nav a {
+        color: inherit;
+        text-decoration: none;
+        font-size: 13px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        opacity: 0.82;
+      }
+      nav a:hover, nav a.on { background: rgba(255,255,255,0.08); opacity: 1; }
+      .badge {
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--gold);
+        border: 1px solid rgba(196, 161, 90, 0.45);
+        padding: 6px 10px;
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 400px;
+        gap: 36px;
+        padding: 36px 0 56px;
+        align-items: start;
+      }
+      .kicker {
+        margin: 0 0 10px;
+        color: var(--gold);
+        font-size: 12px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        font-weight: 700;
+      }
+      h1 {
+        margin: 0 0 14px;
+        font-family: Literata, Georgia, serif;
+        font-size: clamp(1.8rem, 3vw, 2.6rem);
+        line-height: 1.2;
+        font-weight: 700;
+      }
+      .lead { margin: 0 0 22px; color: var(--muted); font-size: 17px; line-height: 1.6; max-width: 46ch; }
+      .news {
+        display: grid;
+        gap: 12px;
+        margin: 0 0 22px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 16px 18px;
+        box-shadow: 0 10px 30px rgba(18, 24, 38, 0.05);
+      }
+      .card span { display: block; font-size: 12px; color: var(--gold); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
+      .card b { display: block; font-size: 15px; margin-bottom: 4px; }
+      .card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+      .note {
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.55;
+        padding: 14px 16px;
+        border-left: 3px solid var(--gold);
+        background: rgba(255,255,255,0.45);
+      }
+      .note code {
+        font-size: 12px;
+        background: #fff;
+        padding: 1px 6px;
+        border-radius: 6px;
+      }
+      .widget-col { position: sticky; top: 20px; }
+      .widget-col .label {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin: 0 0 10px;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      iframe {
+        width: 100%;
+        height: 640px;
+        border: 0;
+        border-radius: 18px;
+        background: #070c19;
+        box-shadow: 0 18px 50px rgba(14, 26, 50, 0.22);
+      }
+      .snippet {
+        margin-top: 14px;
+        background: var(--navy);
+        color: #dbe4ff;
+        border-radius: 14px;
+        padding: 14px 16px;
+        font-size: 12px;
+        line-height: 1.45;
+        overflow: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      footer {
+        background: var(--navy-2);
+        color: rgba(244, 247, 255, 0.78);
+        padding: 22px 0;
+        font-size: 13px;
+      }
+      .foot-inner { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      footer strong { color: #fff; }
+      @media (max-width: 900px) {
+        .layout { grid-template-columns: 1fr; }
+        .widget-col { position: static; }
+        iframe { height: 540px; }
+        nav { display: none; }
       }
     </style>
   </head>
   <body>
-    <header>
-      <strong>ИГУ</strong><span>учебный портал · демо встраивания</span>
-    </header>
-    <main>
-      <article>
-        <h1>Расписание и цифры — без кабинета аналитика</h1>
-        <p>
-          Это не настоящий сайт вуза. Так чат выглядит, если его вставить
-          в любую страницу: новости, личный кабинет, лендинг приёмной комиссии.
-        </p>
-        <p>Справа — всегда открытая панель через iframe (шапка приложения спрятана).</p>
-        <p>
-          Для кнопки чата в углу страницы вставьте
-          <code style="display:inline;padding:0">&lt;script src="/widget.js" async&gt;&lt;/script&gt;</code>
-          в подвал сайта. Готовый сниппет с вашим адресом — в приложении, кнопка «Интеграция».
-        </p>
-      </article>
-      <aside>
-        <p>Виджет · <code style="display:inline;padding:0">&lt;iframe src="/?embed=1"&gt;</code></p>
-        <iframe src="/?embed=1" title="Чат GIGACHADS"></iframe>
-        <p>Код для своего сайта:</p>
-        <code>&lt;iframe
+    <div class="top">
+      <div class="top-inner">
+        <div class="brand">
+          <span class="crest">ИГУ</span>
+          <div>
+            <strong>Иркутский государственный университет</strong>
+            <small>учебный портал · демо встраивания</small>
+          </div>
+        </div>
+        <nav>
+          <a href="#" class="on">Главная</a>
+          <a href="#">Поступление</a>
+          <a href="#">Студентам</a>
+          <a href="#">Новости</a>
+        </nav>
+        <span class="badge">Демо</span>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <div class="layout">
+        <article>
+          <p class="kicker">Приёмная комиссия</p>
+          <h1>Расписание и цифры — без кабинета аналитика</h1>
+          <p class="lead">
+            Спросите про факультеты, бюджетные места или средний балл прямо на сайте вуза.
+            Справа — живой чат GIGACHADS: шапка приложения спрятана, ответ идёт из базы.
+          </p>
+          <div class="news">
+            <div class="card">
+              <span>Поступление</span>
+              <b>Приём документов на бакалавриат открыт</b>
+              <p>Сроки, перечень направлений и проходные баллы прошлого года — в чате справа.</p>
+            </div>
+            <div class="card">
+              <span>Студентам</span>
+              <b>Расписание сессии публикуется по факультетам</b>
+              <p>Это макет портала. Так виджет выглядит в новостях или в личном кабинете.</p>
+            </div>
+          </div>
+          <p class="note">
+            Кнопка в углу страницы: одна строка
+            <code>&lt;script src="/widget.js" async&gt;&lt;/script&gt;</code>
+            в подвал сайта. Готовый сниппет — в приложении, «Интеграция».
+          </p>
+        </article>
+        <aside class="widget-col">
+          <p class="label"><span>Помощник</span><span>iframe · embed</span></p>
+          <iframe src="/?embed=1" title="Чат GIGACHADS"></iframe>
+          <pre class="snippet">&lt;iframe
   src="https://ВАШ_ДОМЕН/?embed=1"
   title="Чат GIGACHADS"
-  width="420"
-  height="640"
-  style="border:0;border-radius:16px"&gt;
-&lt;/iframe&gt;</code>
-      </aside>
-    </main>
+  width="400" height="640"
+  style="border:0;border-radius:18px"&gt;
+&lt;/iframe&gt;</pre>
+        </aside>
+      </div>
+    </div>
+
+    <footer>
+      <div class="foot-inner">
+        <span><strong>ИГУ</strong> · учебный портал, не официальный сайт</span>
+        <span>Виджет GIGACHADS · Код Байкала 2026</span>
+      </div>
+    </footer>
   </body>
 </html>

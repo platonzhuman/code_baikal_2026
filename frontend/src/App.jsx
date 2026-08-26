@@ -150,7 +150,7 @@ export default function App() {
       {!embed && (
         <header>
           <div className="hud glass">
-            <button type="button" className="logo" onClick={() => { setPage('welcome'); window.scrollTo(0, 0) }}>
+            <button type="button" className="logo" onClick={() => { setPage('welcome'); document.querySelector('.app')?.scrollTo(0, 0) }}>
               G
             </button>
             {page !== 'login' && (
