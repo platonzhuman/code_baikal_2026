@@ -131,18 +131,25 @@ async def seed(conn: asyncpg.Connection) -> None:
     program_ids = [r["id"] for r in await conn.fetch("SELECT id FROM programs ORDER BY id")]
 
     # ---- 3) Студенты ----
-    stud_rows = [
-        (f"Студент {random.choice(DOCTORS)} {i}", f"SC-{random.randint(100000,999999)}",
-         f"s{i}@student.uni.ru", f"+7 950 {random.randint(100,999)}-{random.randint(10,99)}-{random.randint(10,99)}",
-         random.choice(program_ids), random.randint(1, 5),
-         round(random.uniform(2.0, 5.0), 2),
-         random.choices(["active", "expelled", "academic_leave"], weights=[90, 6, 4])[0],
-         random.choices(["budget", "paid"], weights=[70, 30])[0])
-        for i in range(2500)
-    ]
+    stud_rows = []
+    for i in range(2500):
+        enrolled_year = random.choice([2021, 2022, 2023, 2024, 2025])
+        status = random.choices(["active", "expelled", "academic_leave"], weights=[90, 6, 4])[0]
+        # год смены статуса: для exp/leave — год после поступления (или null для active)
+        status_since_year = random.randint(enrolled_year, 2026) if status != "active" else None
+        stud_rows.append(
+            (f"Студент {random.choice(DOCTORS)} {i}", f"SC-{random.randint(100000,999999)}",
+             f"s{i}@student.uni.ru",
+             f"+7 950 {random.randint(100,999)}-{random.randint(10,99)}-{random.randint(10,99)}",
+             random.choice(program_ids), random.randint(1, 5),
+             round(random.uniform(2.0, 5.0), 2),
+             status,
+             random.choices(["budget", "paid"], weights=[70, 30])[0],
+             enrolled_year, status_since_year)
+        )
     await conn.executemany(
-        "INSERT INTO students (fio, student_card_no, email, phone, program_id, course, gpa, status, source) "
-        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        "INSERT INTO students (fio, student_card_no, email, phone, program_id, course, gpa, status, source, "
+        "enrolled_year, status_since_year) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
         stud_rows)
     student_ids = [r["id"] for r in await conn.fetch("SELECT id FROM students ORDER BY id")]
 

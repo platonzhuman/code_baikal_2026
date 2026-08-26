@@ -12,7 +12,9 @@ from app.config import get_settings
 def check_login(login: str, password: str) -> str | None:
     """Сверка логина/пароля с кредами из настроек. Возвращает роль или None."""
     for role, (r_login, r_pass) in get_settings().role_credentials.items():
-        if hmac.compare_digest(login, r_login) and hmac.compare_digest(password, r_pass):
+        # сравниваем через bytes — compare_digest не поддерживает не-ASCII str
+        if hmac.compare_digest(login.encode(), r_login.encode()) and \
+           hmac.compare_digest(password.encode(), r_pass.encode()):
             return role
     return None
 

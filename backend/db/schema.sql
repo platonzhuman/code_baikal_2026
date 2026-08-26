@@ -53,7 +53,9 @@ CREATE TABLE IF NOT EXISTS students (
     course          INTEGER NOT NULL,                -- Курс: 1..4/5
     gpa             NUMERIC(4,2),                    -- Средний балл (средний GPA)
     status          TEXT DEFAULT 'active',           -- 'active'|'expelled'|'academic_leave'
-    source          TEXT DEFAULT 'budget'            -- 'budget'|'paid'
+    source          TEXT DEFAULT 'budget',           -- 'budget'|'paid'
+    enrolled_year   INTEGER,                         -- год поступления (для «в … году»)
+    status_since_year INTEGER                        -- год смены статуса (отчисление/академ)
 );
 
 -- 6. Абитуриенты -> ПДн-чувствительная: fio, ege_score - агрегируем

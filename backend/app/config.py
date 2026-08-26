@@ -39,11 +39,11 @@ class Settings(BaseSettings):
     # Серверная авторизация ролей. Общие логины/пароли на класс (хранятся в .env).
     # Абитуриент — гость (без логина); студент/преподаватель/сотрудник — по кредам.
     auth_student_login: str = "student"
-    auth_student_password: str = "student"
+    auth_student_password: str = "student2026"
     auth_teacher_login: str = "teacher"
-    auth_teacher_password: str = "teacher"
+    auth_teacher_password: str = "teacher2026"
     auth_staff_login: str = "staff"
-    auth_staff_password: str = "staff"
+    auth_staff_password: str = "admin2026"
     # Токен живёт APP_SECRET + ttl (сек)
     token_ttl: int = 7200
 

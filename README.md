@@ -48,14 +48,17 @@ SQL и таблицу результата.
 ```
 backend/
   app/
-    main.py                  # FastAPI: /health, /chat, /schema, /logs, /history
+    main.py                  # FastAPI: /health, /chat, /login, /schema, /logs, /history
     config.py                # настройки из .env (pydantic-settings)
     core/
-      schemas.py             # контракт API (pydantic)
-      security.py            # AST-валидатор (SELECT/whitelist/ПДн/авто-LIMIT)
-      schema_sanitizer.py    # очищенная от ПДн схема + промпты (few-shot)
-      db.py                  # asyncpg пул, READ ONLY, statement_timeout
-      history.py             # история диалогов (в памяти)
+      schemas.py             # контракт API (pydantic) + роли
+      security.py            # AST-валидатор (SELECT / role-aware whitelist / ПДн / авто-LIMIT)
+      schema_loader.py       # схема БД из каталога (без хардкода)
+      schema_sanitizer.py    # очищенная от ПДн схема + промпты (словарь значений, few-shot)
+      auth.py                # /login, HMAC-токены, роль по токену
+      audit.py               # аудит-лог запросов в файл (без ПДн)
+      db.py                  # asyncpg пул, READ ONLY, statement_timeout, EXPLAIN
+      history.py             # история диалогов (perсистентно в chat_messages) + rate-limit
     services/
       llm_client.py          # LLM: генератор, судья 0..1, суммаризатор, сужение, explanation
       orchestrator.py        # цепочка: вопрос → LLM → судья → AST → БД → ответ
@@ -80,7 +83,7 @@ frontend/
 
 ### 0. Предварительно
 
-- Python 3.11+, Node.js 18+, (опц.) Docker.
+- Python 3.11+, Node.js 20.19+ (Vite 8 требует Node 20.19+/22), (опц.) Docker.
 - Внешняя БД PostgreSQL (кластер `vesna-db7`) или поднять локальную через docker.
 
 ### 1. Настройка окружения (переменные и доступы)
@@ -165,8 +168,9 @@ npm install
 npm run dev                          # → http://localhost:5173
 ```
 
-- Чат открывается сразу; без входа роль — `applicant`.
-- Фейковый вход на фронте → роль `staff` (пароль на бэк не уходит).
+- Чат открывается сразу; без входа роль — `applicant` (абитуриент).
+- **Вход** — `POST /login` (общие логины `student`/`teacher`/`staff` → токен). Роль определяет
+  **сервер**: фронт передаёт `Authorization: Bearer <token>`, клиент роль не подменяет.
 - Встраиваемый виджет: `http://localhost:5173/?embed=1`.
 
 ---
@@ -185,6 +189,17 @@ curl -X POST http://127.0.0.1:8000/chat -H 'Content-Type: application/json' \
 curl -X POST http://127.0.0.1:8000/chat -H 'Content-Type: application/json' \
   -d '{"question":"Сколько студентов на факультете ИТ?","role":"staff"}'
 
+# Вход (общий логин на роль) -> токен
+curl -X POST http://127.0.0.1:8000/login -H 'Content-Type: application/json' \
+  -d '{"login":"staff","password":"staff"}'
+# → { "role": "staff", "token": "…" }
+
+# Вопрос под ролью (токен в Authorization) — роль берёт сервер
+TOK=<вставь токен выше>
+curl -X POST http://127.0.0.1:8000/chat -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOK" \
+  -d '{"question":"Численность студентов по факультетам?","role":"applicant"}'
+
 # Очищенная схема (без ПДн)
 curl "http://127.0.0.1:8000/schema?role=applicant"
 
@@ -197,7 +212,7 @@ curl http://127.0.0.1:8000/logs
 
 Запрос:
 ```json
-{ "question": "…", "role": "applicant|staff", "session_id": "uuid",
+{ "question": "…", "role": "applicant|student|teacher|staff", "session_id": "uuid",
   "options": { "explain": true, "max_rows": 50 } }
 ```
 Ответ `success`:
@@ -229,12 +244,16 @@ cd backend
 
 ## Роли и политика ПДн
 
-- `applicant` — абитуриент: направления, места, проходные баллы, статистика приёма (агрегаты).
-- `staff` — сотрудник/администрация: численность, приём, динамика, кафедры, нагрузка (агрегаты).
+- `applicant` — абитуриент (гость, по умолчанию): направления, места, проходные баллы, статистика приёма.
+- `student` — студент (по логину): успеваемость, средний балл, задолженности, дисциплины.
+- `teacher` — преподаватель (по логину): дисциплины, группы, средний балл, % неаттестованных.
+- `staff` — сотрудник/администрация (по логину): численность, приём, динамика, кафедры, аудитории, отчисления.
+
+Роль определяет **сервер по токену** после `POST /login` (гость = абитуриент; клиент роль не подменяет).
 
 **Правила:**
 - только `SELECT`; запрещены INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE;
-- доступны только таблицы whitelist (8 таблиц);
+- доступны только таблицы из whitelist **роли** (у администрации — все 8, у остальных — свои);
 - `fio`, `email`, `phone`, `student_card_no`, `passport` — не выдаются никому;
 - по `students`/`applicants`/`enrollments` — только агрегаты (COUNT/AVG/MIN/MAX/GROUP BY);
 - широкий запрос без фильтра/агрегата → автоматический `LIMIT` + предупреждение + `suggested_filters`;

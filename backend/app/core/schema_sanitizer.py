@@ -128,11 +128,38 @@ FEW_SHOT: dict[str, list[tuple[str, str]]] = {
          "WHERE lower(e.semester) LIKE '%весн%' GROUP BY f.name LIMIT 50"),
         ("Сколько студентов имеют академическую задолженность (не сдали экзамен)?",
          "SELECT COUNT(DISTINCT e.student_id) AS debtors FROM enrollments e WHERE e.passed = false"),
+        ("Сколько студентов отчислено на факультете информационных технологий в 2024 году?",
+         "SELECT f.name, COUNT(s.id) AS expelled FROM students s "
+         "JOIN programs p ON s.program_id = p.id JOIN faculties f ON p.faculty_id = f.id "
+         "WHERE s.status = 'expelled' AND lower(f.name) LIKE '%информационн%' "
+         "AND s.status_since_year = 2024 GROUP BY f.name LIMIT 50"),
+        ("Сколько абитуриентов зачислено на бюджет в 2024 году?",
+         "SELECT COUNT(*) AS enrolled_budget FROM applicants a "
+         "WHERE a.status = 'enrolled' AND a.source = 'budget' "
+         "AND EXTRACT(YEAR FROM a.submitted_date) = 2024"),
     ],
 }
 
 ROLE_LABEL = {"applicant": "абитуриент", "student": "студент",
               "teacher": "преподаватель", "staff": "сотрудник/администрация"}
+
+# Словарь значений полей (русский термин -> значение в БД). КРИТИЧНО: модель не должна
+# угадывать статусы/типы сама — иначе путает 'active' и 'отчислен'.
+VALUE_MAP = (
+    "СЛОВАРЬ ЗНАЧЕНИЙ (используй ТОЛЬКО эти значения, не выдумывай):\n"
+    "- students.status: активный/обучается/учится='active', ОТЧИСЛЕН='expelled', "
+    "академ. отпуск='academic_leave';\n"
+    "- applicants.status: подан='submitted', зачислен='enrolled', отклонён='rejected';\n"
+    "- source: бюджет='budget', платно='paid';\n"
+    "- enrollments.passed: сдал=true, не сдал/задолженность=false;\n"
+    "- programs.form: очная='fulltime', заочная='parttime';\n"
+    "- семестр в enrollments.semester содержит 'spring'/'fall' и год, напр. '2026 spring';\n"
+    "- ГОДЫ для студентов: students.enrolled_year — год поступления; "
+    "students.status_since_year — год изменения статуса (отчисление/академ). "
+    "Для «в … году/2024 год» используй эти поля;\n"
+    "- факультеты (названия ТОЧНО как в БД, не сокращай): Информационные технологии, "
+    "Экономика, Филология, Физика, Право."
+)
 
 
 def build_system_prompt(role: str) -> str:
@@ -149,9 +176,13 @@ def build_system_prompt(role: str) -> str:
         "- если данных нет в схеме или вопрос не про БД — верни \"UNKNOWN\" (не выдумывай);",
         "- сложные запросы: JOIN 3+ таблиц, GROUP BY, оконные функции;",
         "- широкий запрос (без фильтра/агрегата) — добавь LIMIT.",
-        "- Вопросы вида «сколько студентов ОБУЧАЕТСЯ / учатся / численность студентов» — "
-        "обязательно добавляй фильтр s.status='active' (считаем только активных) и группируй "
-        "по факультету или направлению.",
+        VALUE_MAP,
+        "- ПРАВИЛО 'active' применяй ТОЛЬКО к вопросам вида «сколько студентов ОБУЧАЕТСЯ / "
+        "учатся / численность студентов»: добавляй s.status='active' и группируй по факультету. "
+        "Для «ОТЧИСЛЕН» используй s.status='expelled'; для «задолженность» — e.passed=false; "
+        "для «зачислен на бюджет» — a.status='enrolled' AND a.source='budget'.",
+        "- Если пользователь пишет по-русски (например, «отчислен», «бюджет») — подставь "
+        "соответствующее значение из СЛОВАРЯ ЗНАЧЕНИЙ выше.",
         "",
         f"ПРИМЕРЫ (few-shot) для роли {role}:",
     ]
