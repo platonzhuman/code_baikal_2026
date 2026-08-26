@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Chat from './components/Chat'
 import Analytics from './components/Analytics'
 import Welcome from './components/Welcome'
@@ -13,6 +13,84 @@ const ACCOUNTS = [
   { role: 'staff', label: 'Сотрудник', login: 'staff', passwordHint: 'admin2026' },
 ]
 
+function IntegrationModal({ onClose }) {
+  const origin = window.location.origin
+  const snippet = `<script src="${origin}/widget.js" async></script>`
+  const iframeSnippet = `<iframe
+  src="${origin}/?embed=1"
+  title="Чат GIGACHADS"
+  style="border:0;width:380px;height:560px;border-radius:16px">
+</iframe>`
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.body.classList.add('modal-open')
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.body.classList.remove('modal-open')
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [onClose])
+
+  async function copySnippet() {
+    try {
+      await navigator.clipboard.writeText(snippet)
+    } catch {
+      const area = document.createElement('textarea')
+      area.value = snippet
+      area.setAttribute('readonly', '')
+      area.style.position = 'fixed'
+      area.style.left = '-9999px'
+      document.body.appendChild(area)
+      area.select()
+      document.execCommand('copy')
+      document.body.removeChild(area)
+    }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div
+      className="modal-overlay"
+      onClick={onClose}
+      onWheel={(e) => e.stopPropagation()}
+      role="presentation"
+    >
+      <div
+        className="modal glass"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="integrate-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button type="button" className="modal-close" onClick={onClose} aria-label="Закрыть">
+          ×
+        </button>
+        <p className="kicker">Любой сайт</p>
+        <h2 id="integrate-title">Интеграция</h2>
+        <p>
+          Вставьте одну строку в подвал сайта — блок «произвольный HTML», «HTML-код»
+          или «скрипты в footer». WordPress, Bitrix, Tilda и любой HTML.
+        </p>
+        <pre className="snippet"><code>{snippet}</code></pre>
+        <button type="button" className="ghost snippet-copy" onClick={copySnippet}>
+          {copied ? 'Скопировано' : 'Скопировать код'}
+        </button>
+        <p>
+          Программист не нужен: достаточно HTML-блока в CMS. Справа внизу появится
+          кнопка чата. Окно открывается в изолированном iframe и не ломает вёрстку.
+        </p>
+        <p className="muted">Если скрипты подключить нельзя — рамка на странице:</p>
+        <pre className="snippet snippet-iframe"><code>{iframeSnippet}</code></pre>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [page, setPage] = useState(embed ? 'chat' : 'welcome')
   const [loggedIn, setLoggedIn] = useState(isLoggedIn())
@@ -20,6 +98,9 @@ export default function App() {
   const [authError, setAuthError] = useState('')
   const [roleLogin, setRoleLogin] = useState('')
   const [password, setPassword] = useState('')
+  const [showIntegrate, setShowIntegrate] = useState(false)
+  const closeIntegrate = useCallback(() => setShowIntegrate(false), [])
+  const openIntegrate = useCallback(() => setShowIntegrate(true), [])
 
   async function doLogin(e) {
     e.preventDefault()
@@ -41,7 +122,6 @@ export default function App() {
   }
 
   function chooseRole(account) {
-    // подставляем логин + подсказку пароля; пароль вводит пользователь сам
     setRoleLogin(account.login)
     setPassword('')
     setAuthError('')
@@ -55,6 +135,8 @@ export default function App() {
     setPassword('')
     setPage('welcome')
   }
+
+  const selected = ACCOUNTS.find((a) => a.login === roleLogin)
 
   return (
     <div className="app" data-page={page} data-embed={embed ? '1' : undefined}>
@@ -86,6 +168,9 @@ export default function App() {
           </div>
           <div className="hud hud-auth glass">
             {page !== 'login' && <span className="badge">{loggedIn ? getRoleLabel() : 'Абитуриент'}</span>}
+            {page !== 'login' && (
+              <button type="button" className="ghost" onClick={openIntegrate}>Интеграция</button>
+            )}
             {page === 'login' ? (
               <button type="button" className="ghost" onClick={() => setPage('welcome')}>Отмена</button>
             ) : loggedIn ? (
@@ -103,6 +188,7 @@ export default function App() {
             loggedIn={loggedIn}
             onLogin={() => setPage('login')}
             onLogout={doLogout}
+            onIntegrate={openIntegrate}
           />
         )}
         {page === 'chat' && <Chat />}
@@ -126,20 +212,21 @@ export default function App() {
               ))}
             </div>
             <label>
-              Логин
+              <span>Логин</span>
               <input name="login" value={roleLogin} readOnly placeholder="Выберите роль выше" autoComplete="username" />
             </label>
             <label>
-              Пароль
+              <span>Пароль</span>
               <input
                 name="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={roleLogin ? `пароль (подсказка: ${ACCOUNTS.find(a => a.login === roleLogin)?.passwordHint})` : 'Введите пароль'}
+                placeholder="Введите пароль"
                 autoComplete="current-password"
               />
             </label>
+            {selected && <p className="login-hint">Демо: {selected.passwordHint}</p>}
             {authError && <p className="warn">{authError}</p>}
             <button type="submit" className="primary" disabled={loading || !roleLogin || !password}>
               {loading ? 'Вход…' : 'Войти'}
@@ -147,6 +234,7 @@ export default function App() {
           </form>
         )}
       </main>
+      {showIntegrate && <IntegrationModal onClose={closeIntegrate} />}
     </div>
   )
 }
