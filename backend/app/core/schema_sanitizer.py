@@ -302,6 +302,11 @@ FEW_SHOT: dict[str, list[tuple[str, str]]] = {
          "SELECT COUNT(CASE WHEN e.passed = false THEN 1 END) AS debts FROM students s "
          "JOIN groups g ON s.group_id = g.id LEFT JOIN enrollments e ON e.student_id = s.id "
          "WHERE g.name = 'БИВ-211'"),
+        ("Какой процент студентов успешно сдал экзамен по Базам данных с первой попытки?",
+         "SELECT ROUND(100.0 * COUNT(DISTINCT CASE WHEN e.passed AND e.attempt = 1 THEN e.student_id END) "
+         "/ NULLIF(COUNT(DISTINCT e.student_id), 0), 2) AS pass_percent "
+         "FROM enrollments e JOIN courses c ON e.course_id = c.id "
+         "WHERE lower(c.name) LIKE '%баз%данн%'"),
     ],
 }
 
@@ -333,6 +338,8 @@ VALUE_MAP = (
     "· «средний балл/проходной» без уточнения → по всем направлениям.\n"
     "· ⭐ СТАТУС СТУДЕНТА ПО УМОЛЧАНИЮ: если в вопросе про студентов и не указан статус "
     "(учится/обучается/активный/отчислен/академ) → подставь status='active'.\n"
+    "· ⭐ ПРОЦЕНТ/ДОЛЯ без указания года/семестра/факультета → считай по ВСЕМ данным "
+    "(без фильтра) — НЕ переспрашивай.\n"
     "ТЕХНИЧЕСКОЕ:\n"
     "· НЕ используй :плейсхолдеры или $1 в SQL — подставляй конкретные значения;\n"
     "· «Базы данных» (название дисциплины) → LIKE '%баз%данн%' (падежи!).\n"

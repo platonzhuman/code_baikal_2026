@@ -207,7 +207,21 @@ class Orchestrator:
             safe_sql, meta = self.validator.validate(raw_sql)
             timings["ast"] = _ms(_t)
         except SQLValidationError as e:
-            return self._error(e.code, e.message, query_id, start, sql=raw_sql)
+            # Если отказ из-за вывода идентификаторов/полей обучающихся (не в агрегате) —
+            # попробуем ещё раз с явным замечанием (модель иногда упорно пишет s.id).
+            if e.code == "PDN_VIOLATION" and ("агрегат" in e.message or "Идентификатор" in e.message):
+                raw_sql, j2 = await self.llm.generate_sql(
+                    req.question, schema, req.role.value,
+                    feedback="Ошибка: НЕ выводи идентификаторы и поля обучающихся — "
+                             "только агрегаты (COUNT/AVG) или количество.",
+                    history=history,
+                )
+                try:
+                    safe_sql, meta = self.validator.validate(raw_sql)
+                except SQLValidationError as e2:
+                    return self._error(e2.code, e2.message, query_id, start, sql=raw_sql)
+            else:
+                return self._error(e.code, e.message, query_id, start, sql=raw_sql)
 
         # Шаг 3-4: EXPLAIN + COUNT + выборка — ПАРАЛЛЕЛЬНО (экономия ~2 сек на сети к БД).
         page_size = req.max_rows

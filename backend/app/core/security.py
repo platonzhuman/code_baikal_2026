@@ -168,6 +168,10 @@ class SQLValidator:
             return out
 
         for sel in ast.find_all(exp.Select):
+            # Проверяем ТОЛЬКО верхний (пользовательский) вывод — внутренние подзапросы
+            # для расчёта (GROUP BY с id) разрешаем; главное — что не утекает в итог.
+            if sel is not ast and isinstance(ast, exp.Select):
+                continue
             group_cols: set[str] = set()
             group = sel.args.get("group")
             if group is not None:
