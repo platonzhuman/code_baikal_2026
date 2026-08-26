@@ -101,6 +101,23 @@ class SQLValidator:
                 f"Запрещённые таблицы: {', '.join(sorted(unknown))}"
             )
 
+        # 2.1) SELECT * на таблицах с ПДн/обучающимися — запрещён (утечка через звёздочку)
+        pdn_tables = {"students", "applicants", "enrollments", "staff", "v_students", "v_applicants", "v_staff"}
+        for star in ast.find_all(exp.Star):
+            parent_table = ""
+            if star is not None and star.parent is not None:
+                # exp.Star лежит под exp.Column для «t.*»
+                col = star.parent
+                if isinstance(col, exp.Column):
+                    parent_table = col.table.lower()
+            if not parent_table:
+                parent_table = next(iter(tables), "") if len(tables) == 1 else ""
+            if (not parent_table and tables & pdn_tables) or parent_table in pdn_tables:
+                raise PDNViolationError(
+                    "SELECT * на таблицах с персональными данными запрещён — "
+                    "перечислите нужные столбцы явно."
+                )
+
         # 3) ПДн: запрещаем выбирать чувствительные столбцы "в лоб"
         selected = self._wish_columns(ast)
         sensitive = selected & SENSITIVE_COLUMNS

@@ -73,6 +73,22 @@ def _fks(table: str) -> list[str]:
     return [c["name"] for c in _columns(table) if c.get("is_fk")]
 
 
+def _relations_for_role(role: str, allowed: set[str]) -> list[str]:
+    """Строим связи ТОЛЬКО из реальной схемы (_SCHEMA с fk_target) — нет «фантомов».
+    Fallback на статичный список, если схема не загружена (тесты без БД)."""
+    rels: list[str] = []
+    for table in allowed:
+        for c in _columns(table):
+            target = c.get("fk_target")
+            if c.get("is_fk") and target:
+                rels.append(f"{table}.{c['name']} → {target}")
+    if rels:
+        return sorted(set(rels))
+    if not _SCHEMA:
+        return [r for r in RELATIONS if r.split(".")[0] in allowed]
+    return []
+
+
 def all_tables() -> list[str]:
     return [t for t in _SCHEMA.keys()]
 
@@ -109,8 +125,8 @@ def get_sanitized_schema(role: str) -> str:
                 detail += f"={meaning}"
             lines.append(f"    · {detail}")
 
-    # Связи (только для таблиц, доступных роли)
-    allowed_rel = [r for r in RELATIONS if r.split(".")[0] in allowed]
+    # Связи (только реально существующие в загруженной схеме — никакого рассинхрона!)
+    allowed_rel = _relations_for_role(role, allowed)
     if allowed_rel:
         lines.append("СВЯЗИ: " + "; ".join(allowed_rel))
 
