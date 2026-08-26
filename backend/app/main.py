@@ -12,7 +12,10 @@ from app.core.db import Database
 from app.core.history import HistoryStore, RateLimiter, build_store
 from app.core.schemas import (ChatRequest, ChatResponse, HealthResponse,
                               LoginRequest, LoginResponse, Role)
-from app.core.schema_sanitizer import get_sanitized_schema
+from app.core.schema_loader import load_schema
+from app.core.schema_sanitizer import (
+    all_tables, get_sanitized_schema, set_schema,
+)
 from app.services.orchestrator import Orchestrator
 
 log = structlog.get_logger()
@@ -24,6 +27,14 @@ async def lifespan(app: FastAPI):
     db = Database(settings.database_url)
     await db.connect()
     app.state.db = db
+    # Схема подтягивается из каталога БД (без хардкода). Если БД недоступна — пустая.
+    try:
+        schema = await load_schema(db)
+        set_schema(schema)
+        log.info("schema_loaded", tables=len(all_tables()))
+    except Exception as e:
+        set_schema({})
+        log.warning("schema_load_failed", err=str(e)[:120])
     app.state.orchestrator = Orchestrator(db)
     app.state.store = build_store(db=db)
     app.state.rate_limiter = RateLimiter(settings.rate_limit_per_minute)
