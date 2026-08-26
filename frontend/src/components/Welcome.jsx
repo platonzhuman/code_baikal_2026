@@ -39,12 +39,15 @@ function desktopSmooth() {
 
 export default function Welcome({ onChat, loggedIn, onLogin, onLogout, onIntegrate }) {
   const rootRef = useRef(null)
-  const toTop = useRef(() => window.scrollTo(0, 0))
+  const toTop = useRef(() => {
+    document.querySelector('.app')?.scrollTo(0, 0)
+  })
 
   useEffect(() => {
     const root = rootRef.current
     if (!root) return
-    window.scrollTo(0, 0)
+    const scroller = root.closest('.app') || document.documentElement
+    scroller.scrollTop = 0
 
     const nodes = [...root.querySelectorAll('[data-reveal]')]
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -61,7 +64,7 @@ export default function Welcome({ onChat, loggedIn, onLogin, onLogout, onIntegra
             io.unobserve(entry.target)
           }
         },
-        { threshold: 0.18, rootMargin: '0px 0px -6% 0px' },
+        { root: scroller, threshold: 0.18, rootMargin: '0px 0px -6% 0px' },
       )
       nodes.forEach((el) => io.observe(el))
       fallback = setTimeout(() => nodes.forEach((el) => el.classList.add('in')), 1400)
@@ -70,17 +73,17 @@ export default function Welcome({ onChat, loggedIn, onLogin, onLogout, onIntegra
     let current = 0
     let target = 0
     let raf = 0
-    const limit = () => Math.max(0, document.documentElement.scrollHeight - window.innerHeight)
+    const limit = () => Math.max(0, scroller.scrollHeight - scroller.clientHeight)
 
     const tick = () => {
       current += (target - current) * 0.16
       if (Math.abs(target - current) < 0.35) {
         current = target
-        window.scrollTo(0, current)
+        scroller.scrollTop = current
         raf = 0
         return
       }
-      window.scrollTo(0, current)
+      scroller.scrollTop = current
       raf = requestAnimationFrame(tick)
     }
 
@@ -102,20 +105,20 @@ export default function Welcome({ onChat, loggedIn, onLogin, onLogout, onIntegra
 
     const onScroll = () => {
       if (raf) return
-      current = window.scrollY
-      target = window.scrollY
+      current = scroller.scrollTop
+      target = scroller.scrollTop
     }
 
     if (desktopSmooth()) {
       window.addEventListener('wheel', onWheel, { passive: false })
-      window.addEventListener('scroll', onScroll, { passive: true })
+      scroller.addEventListener('scroll', onScroll, { passive: true })
     }
 
     return () => {
       clearTimeout(fallback)
       io?.disconnect()
       window.removeEventListener('wheel', onWheel)
-      window.removeEventListener('scroll', onScroll)
+      scroller.removeEventListener('scroll', onScroll)
       if (raf) cancelAnimationFrame(raf)
     }
   }, [])

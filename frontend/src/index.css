@@ -10,21 +10,45 @@
 }
 
 * { box-sizing: border-box; }
-html { color-scheme: dark; }
-html, body, #root { height: 100%; }
 
-html:has(.app[data-page="welcome"]) {
-  height: auto;
-  min-height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
+html {
+  color-scheme: dark;
 }
 
-html:has(.app[data-page="welcome"]) body,
-html:has(.app[data-page="welcome"]) #root {
-  height: auto;
-  min-height: 100%;
-  overflow: visible;
+/* Viewport never scrolls: Linux Chrome draws a GTK bar (track + arrows) on
+   the root scroller and ignores ::-webkit-scrollbar there. Inner overflow:auto
+   still hides with the rules below. */
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+html, body, #root, .app, main, .landing, .chat, .history {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar,
+.app::-webkit-scrollbar,
+main::-webkit-scrollbar,
+.landing::-webkit-scrollbar,
+.chat::-webkit-scrollbar,
+.history::-webkit-scrollbar,
+html::-webkit-scrollbar-button,
+body::-webkit-scrollbar-button,
+#root::-webkit-scrollbar-button,
+.app::-webkit-scrollbar-button,
+main::-webkit-scrollbar-button,
+.landing::-webkit-scrollbar-button,
+.chat::-webkit-scrollbar-button,
+.history::-webkit-scrollbar-button {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+  background: transparent;
 }
 
 body {
@@ -76,6 +100,7 @@ h1 {
 }
 
 .app {
+  height: 100%;
   min-height: 100%;
   display: flex;
   flex-direction: column;
@@ -84,11 +109,13 @@ h1 {
 }
 
 .app:not([data-page="welcome"]) {
-  height: 100%;
   overflow: hidden;
 }
 
-.app[data-page="welcome"] { height: auto; }
+.app[data-page="welcome"] {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
 
 .bg-media {
   position: fixed;
@@ -226,6 +253,20 @@ main {
 .app[data-page="welcome"] main {
   flex: none;
   overflow: visible;
+}
+
+.app[data-page="chat"] main,
+.app[data-page="chat"] .chat-layout,
+.app[data-page="chat"] .chat {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.app[data-page="analytics"] main,
+.app[data-page="login"] main {
+  overflow-x: hidden;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .landing { width: 100%; }
@@ -588,7 +629,8 @@ main {
 
 .history {
   flex: 1;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -861,7 +903,8 @@ body.modal-open { overflow: hidden; }
 
 html:has(body.modal-open),
 html:has(body.modal-open) body,
-html:has(body.modal-open) #root {
+html:has(body.modal-open) #root,
+html:has(body.modal-open) .app {
   overflow: hidden;
   height: 100%;
 }
@@ -1103,7 +1146,7 @@ html:has(body.modal-open) #root {
   .bg-media { display: none; }
   .app { background: var(--space) url('/bg.jpg') center / cover no-repeat; }
   .spinner span { animation: none; }
-  html:has(.app[data-page="welcome"]) {
+  .app[data-page="welcome"] {
     scroll-behavior: auto;
   }
   [data-reveal] {
