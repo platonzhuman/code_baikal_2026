@@ -2,24 +2,54 @@ import { useState } from 'react'
 import Chat from './components/Chat'
 import Analytics from './components/Analytics'
 import Welcome from './components/Welcome'
-import { isLoggedIn, login, logout } from './auth'
+import { isLoggedIn, login, logout, getRoleLabel } from './auth'
 
 const embed = new URLSearchParams(window.location.search).has('embed')
+
+// Общие учётки на роль (совпадают с backend/.env): login/password
+const ACCOUNTS = [
+  { role: 'student', label: 'Студент', login: 'student', password: 'student' },
+  { role: 'teacher', label: 'Преподаватель', login: 'teacher', password: 'teacher' },
+  { role: 'staff', label: 'Сотрудник', login: 'staff', password: 'staff' },
+]
 
 export default function App() {
   const [page, setPage] = useState(embed ? 'chat' : 'welcome')
   const [loggedIn, setLoggedIn] = useState(isLoggedIn())
+  const [loading, setLoading] = useState(false)
+  const [authError, setAuthError] = useState('')
 
-  function doLogin(e) {
+  async function doLogin(e) {
     e.preventDefault()
-    login()
-    setLoggedIn(true)
-    setPage('chat')
+    const form = new FormData(e.currentTarget)
+    const loginValue = String(form.get('login') || '').trim()
+    const pass = String(form.get('password') || '')
+    setLoading(true)
+    setAuthError('')
+    try {
+      await login(loginValue, pass)
+      setLoggedIn(true)
+      setPage('chat')
+    } catch (err) {
+      setAuthError(err.message || 'Не удалось войти')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function quickLogin(account) {
+    // заполняем и сразу отправляем вход от имени роли
+    const form = document.querySelector('form.login')
+    if (!form) return
+    form.login.value = account.login
+    form.password.value = account.password
+    form.requestSubmit()
   }
 
   function doLogout() {
     logout()
     setLoggedIn(false)
+    setAuthError('')
     setPage('welcome')
   }
 
@@ -52,7 +82,7 @@ export default function App() {
             )}
           </div>
           <div className="hud hud-auth glass">
-            {page !== 'login' && <span className="badge">{loggedIn ? 'Сотрудник' : 'Гость'}</span>}
+            {page !== 'login' && <span className="badge">{loggedIn ? getRoleLabel() : 'Абитуриент'}</span>}
             {page === 'login' ? (
               <button type="button" className="ghost" onClick={() => setPage('welcome')}>Отмена</button>
             ) : loggedIn ? (
@@ -76,12 +106,34 @@ export default function App() {
         {page === 'analytics' && <Analytics />}
         {page === 'login' && (
           <form className="login glass" onSubmit={doLogin}>
-            <p className="kicker">Сотрудник</p>
-            <h1>Вход</h1>
-            <p>Гость продолжает без учётки. Пароль на сервер не уходит.</p>
-            <input name="login" placeholder="Логин" autoComplete="username" />
-            <input name="password" type="password" placeholder="Пароль" autoComplete="current-password" />
-            <button type="submit" className="primary">Войти</button>
+            <p className="kicker">Вход по роли</p>
+            <h1>Войти</h1>
+            <p>Гость продолжает как абитуриент. Выберите роль или введите логин/пароль.</p>
+            <div className="login-roles">
+              {ACCOUNTS.map((a) => (
+                <button
+                  key={a.role}
+                  type="button"
+                  className="chip"
+                  disabled={loading}
+                  onClick={() => quickLogin(a)}
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+            <label>
+              Логин
+              <input name="login" placeholder="student / teacher / staff" autoComplete="username" />
+            </label>
+            <label>
+              Пароль
+              <input name="password" type="password" placeholder="Пароль" autoComplete="current-password" />
+            </label>
+            {authError && <p className="warn">{authError}</p>}
+            <button type="submit" className="primary" disabled={loading}>
+              {loading ? 'Вход…' : 'Войти'}
+            </button>
           </form>
         )}
       </main>

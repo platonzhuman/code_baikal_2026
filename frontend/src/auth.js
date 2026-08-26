@@ -1,20 +1,49 @@
-const AUTH_KEY = 'gigachads_logged_in'
+const TOKEN_KEY = 'gigachads_token'
+const ROLE_KEY = 'gigachads_role'
 const SESSION_KEY = 'gigachads_session_id'
 
+const ROLE_LABEL = {
+  applicant: 'Абитуриент',
+  student: 'Студент',
+  teacher: 'Преподаватель',
+  staff: 'Сотрудник',
+}
+
 export function isLoggedIn() {
-  return localStorage.getItem(AUTH_KEY) === '1'
+  return Boolean(localStorage.getItem(TOKEN_KEY))
 }
 
-export function login() {
-  localStorage.setItem(AUTH_KEY, '1')
-}
-
-export function logout() {
-  localStorage.removeItem(AUTH_KEY)
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || ''
 }
 
 export function getRole() {
-  return isLoggedIn() ? 'staff' : 'applicant'
+  return localStorage.getItem(ROLE_KEY) || 'applicant'
+}
+
+export function getRoleLabel() {
+  return ROLE_LABEL[getRole()] || 'Абитуриент'
+}
+
+export async function login(login, password) {
+  const res = await fetch('/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login, password }),
+  })
+  if (!res.ok) {
+    const d = await res.json().catch(() => null)
+    throw new Error(d?.detail || d?.message || 'Неверный логин или пароль')
+  }
+  const data = await res.json()
+  localStorage.setItem(TOKEN_KEY, data.token)
+  localStorage.setItem(ROLE_KEY, data.role)
+  return data
+}
+
+export function logout() {
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(ROLE_KEY)
 }
 
 export function getSessionId() {

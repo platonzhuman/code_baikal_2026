@@ -8,6 +8,9 @@ export default defineConfig({
       '/chat': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
       '/logs': 'http://localhost:8000',
+      '/login': 'http://localhost:8000',
+      '/schema': 'http://localhost:8000',
+      '/history': 'http://localhost:8000',
     },
   },
 })

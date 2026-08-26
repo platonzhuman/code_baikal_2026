@@ -1,4 +1,4 @@
-import { getRole, getSessionId } from './auth'
+import { getRole, getSessionId, getToken } from './auth'
 
 const MOCK = {
   status: 'success',
@@ -14,24 +14,31 @@ const MOCK = {
 export async function sendChat(question) {
   const payload = {
     question,
-    role: getRole(),
+    role: getRole(), // роль отправляем для гостя; сервер предпочитает токен
     session_id: getSessionId(),
     explain: true,
     max_rows: 50,
   }
 
+  const headers = { 'Content-Type': 'application/json' }
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+
   try {
     const res = await fetch('/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     })
     const data = await res.json().catch(() => null)
+    if (res.status === 401) {
+      return { status: 'error', error: { message: 'Сессия истекла. Войдите снова.' } }
+    }
+    if (res.status === 429) {
+      return { status: 'error', error: { message: 'Слишком много запросов. Подождите минуту.' } }
+    }
     if (!data || (data.status !== 'success' && data.status !== 'error')) {
-      return {
-        status: 'error',
-        error: { message: 'Сервер вернул не ответ чата.' },
-      }
+      return { status: 'error', error: { message: 'Сервер вернул не ответ чата.' } }
     }
     return data
   } catch {
