@@ -5,6 +5,57 @@ import { downloadCsv } from '../csv'
 import { loadThreads, saveThreads } from '../threads'
 import { getSessionId } from '../auth'
 
+function hasExplain(explanation) {
+  if (!explanation) return false
+  return ['tables', 'joins', 'filters', 'aggregates', 'constraints'].some(
+    (k) => explanation[k]?.length,
+  )
+}
+
+function ExplainBlock({ explanation }) {
+  if (!hasExplain(explanation)) return null
+  const rows = [
+    ['таблицы', explanation.tables],
+    ['JOIN', explanation.joins],
+    ['фильтры', explanation.filters],
+    ['агрегаты', explanation.aggregates],
+    ['ограничения', explanation.constraints],
+  ].filter(([, v]) => v?.length)
+  return (
+    <ul className="explain">
+      {rows.map(([label, values]) => (
+        <li key={label}>
+          <b>{label}</b>
+          {values.join(', ')}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function Trace({ sql, explanation }) {
+  const [open, setOpen] = useState(false)
+  if (!sql && !hasExplain(explanation)) return null
+  return (
+    <div className="trace">
+      <button type="button" className="ghost trace-toggle" onClick={() => setOpen((v) => !v)}>
+        {open ? 'Скрыть SQL' : 'Показать SQL и объяснение'}
+      </button>
+      {open && (
+        <div className="trace-body">
+          <ExplainBlock explanation={explanation} />
+          {sql && (
+            <div className="sql">
+              <span>SQL</span>
+              <pre>{sql}</pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function when(ts) {
   if (!ts) return ''
   const min = Math.round((Date.now() - ts) / 60000)
@@ -150,6 +201,7 @@ export default function Chat() {
           from: 'assistant',
           text: data.text || data.error?.message || 'Ошибка запроса',
           sql: data.sql || undefined,
+          explanation: data.explanation,
         },
       ])
     } else {
@@ -159,6 +211,7 @@ export default function Chat() {
           from: 'assistant',
           text: data.text,
           sql: data.sql,
+          explanation: data.explanation,
           result: maskResult(data.result),
           warning: data.result?.warning,
           truncated: data.result?.truncated,
@@ -268,12 +321,7 @@ export default function Chat() {
                   </div>
                 </div>
               )}
-              {m.sql && (
-                <div className="sql">
-                  <span>SQL</span>
-                  <pre>{m.sql}</pre>
-                </div>
-              )}
+              <Trace sql={m.sql} explanation={m.explanation} />
             </article>
           ))}
           {loading && (

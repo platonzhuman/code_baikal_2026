@@ -51,3 +51,9 @@ export async function fetchLogs() {
   const data = await res.json()
   return Array.isArray(data) ? data : data.items || []
 }
+
+export async function fetchAnalytics() {
+  const res = await fetch('/analytics')
+  if (!res.ok) throw new Error('analytics')
+  return res.json()
+}
